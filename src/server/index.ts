@@ -163,7 +163,16 @@ app.get('/api/trades', async (req, res) => {
 
         const trades = dbTrades.map(trade => ({
             ...trade,
-            isCopied: trade.bot === true || (trade.processedBy && trade.processedBy.length > 0)
+            isCopied: trade.bot === true || (trade.processedBy && trade.processedBy.length > 0),
+            // Extract follower execution data for display
+            followerData: trade.followerStatuses ? Object.entries(trade.followerStatuses).map(([followerId, status]: [string, any]) => ({
+                followerId,
+                status: status.status,
+                details: status.details,
+                myEntryAmount: status.myEntryAmount,
+                myEntryPrice: status.myEntryPrice,
+                myExecutedAt: status.myExecutedAt
+            })) : []
         }));
 
         res.json(trades);
@@ -742,6 +751,8 @@ input, select { width: 100%; background: var(--bg); border: 1px solid var(--bord
           <th>Lado</th>
           <th>Valor</th>
           <th>Mercado</th>
+          <th>Minha Entrada</th>
+          <th>Meu Lucro</th>
           <th>Status</th>
         </tr>
       </thead>
@@ -850,6 +861,8 @@ async function refresh() {
         <td><span style="color: \${t.side === 'BUY' ? 'var(--success)' : 'var(--danger)'}">\${t.side}</span></td>
         <td>$\${(t.usdcSize || 0).toFixed(2)}</td>
         <td style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">\${t.title || t.slug}</td>
+        <td style="font-family: monospace; font-size: 0.8rem">\${t.followerData?.length > 0 ? '$' + (t.followerData[0]?.myEntryPrice || 0).toFixed(4) : '---'}</td>
+        <td style="font-family: monospace; font-size: 0.8rem">\${t.followerData?.length > 0 ? '$' + (t.followerData[0]?.myEntryAmount || 0).toFixed(2) : '---'}</td>
         <td>\${t.bot ? '<span style="color: var(--success)">✓ Executado</span>' : '<span style="color: var(--text-dim)">Pendente</span>'}</td>
       </tr>
     \`).join('');
