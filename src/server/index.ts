@@ -157,36 +157,54 @@ app.get('/api/trades', async (req, res) => {
         const { getUserActivityModel } = await import('../models/userHistory.js');
         const User = await import('../models/user.js');
         
-        // Get monitored trader addresses from users
-        const users = await User.default.find({ 'config.traderAddress': { $exists: true, $ne: '' } });
-        const traderAddresses = Array.from(new Set(users.map((u: any) => u.config.traderAddress!.toLowerCase())));
+        // Logic for filtering:
+        // 1. If explicit traderAddress query param exists, use it.
+        // 2. If not, and we have a logged-in user who is NOT an admin, use THEIR trader.
+        // 3. Otherwise (Admin or no specific trader), fetch from all monitored traders.
+        let traderAddresses: string[] = [];
+        const requestedTrader = req.query.traderAddress as string;
         
-        console.log('[DEBUG] Monitored trader addresses:', traderAddresses);
-        
-        // Fetch trades from each trader's specific model using the factory
-        // The factory automatically injects traderAddress into the query filter
-        let allTrades: any[] = [];
-        
-        for (const traderAddress of traderAddresses) {
-            const UserActivity = getUserActivityModel(traderAddress as string);
-            const trades = await UserActivity.find();
-            allTrades = allTrades.concat(trades);
-            console.log(`[DEBUG] Fetched ${trades.length} trades for trader ${(traderAddress as string).slice(0, 6)}`);
+        if (requestedTrader) {
+            traderAddresses = [requestedTrader.toLowerCase()];
+        } else if (req.fullUser && req.fullUser.role !== 'admin' && req.fullUser.config?.traderAddress) {
+            traderAddresses = [req.fullUser.config.traderAddress.toLowerCase()];
+        } else {
+            const users = await User.default.find({ 'config.traderAddress': { $exists: true, $ne: '' } });
+            traderAddresses = Array.from(new Set(users.map((u: any) => u.config.traderAddress!.toLowerCase())));
         }
         
-        // Deduplicate by transactionHash (in case same trade appears for multiple traders)
+        console.log('[DEBUG] Filtering trades for:', traderAddresses);
+        
+        let allTrades: any[] = [];
+        for (const traderAddress of traderAddresses) {
+            const UserActivity = getUserActivityModel(traderAddress as string);
+            // Limit each trader fetch to improve performance
+            const trades = await UserActivity.find().sort({ timestamp: -1 }).limit(limit);
+            allTrades = allTrades.concat(trades);
+        }
+        
+        // Deduplicate and sort
         const seenHashes = new Set();
         const uniqueTrades = allTrades.filter(trade => {
-            if (!trade.transactionHash) return false;
-            if (seenHashes.has(trade.transactionHash)) return false;
-            seenHashes.add(trade.transactionHash);
+            const hash = trade.transactionHash || trade.txHash;
+            if (!hash) return false;
+            if (seenHashes.has(hash)) return false;
+            seenHashes.add(hash);
             return true;
         });
         
-        // Sort by timestamp descending and limit
         const sortedTrades = uniqueTrades
             .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
             .slice(0, limit);
+
+        const trades = sortedTrades.map((trade: any) => ({
+            ...trade,
+            // Adicionar campo displayTrader para facilitar no frontend
+            displayTrader: trade.pseudonym || trade.name || `${trade.traderAddress.slice(0,6)}...${trade.traderAddress.slice(-4)}`,
+            isCopied: trade.bot === true || (trade.processedBy && trade.processedBy.length > 0)
+        }));
+
+        res.json(trades);
 
         console.log('[DEBUG] Total unique trades after dedup:', sortedTrades.length);
 
@@ -811,7 +829,7 @@ input, select { width: 100%; background: var(--bg); border: 1px solid var(--bord
   </div>
 
   <div class="section-header">
-    <h2>Trades Globais Recentes</h2>
+    <h2 id="trade-title">Atividades Recentes do Trader</h2>
   </div>
   <div class="card animate" style="animation-delay: 0.5s">
     <table id="trade-table">
@@ -865,8 +883,16 @@ async function refresh() {
     const [status, users, trades] = await Promise.all([
       fetch('/api/status').then(r => r.json()),
       fetch('/api/users').then(r => r.json()),
-      fetch('/api/trades?limit=10').then(r => r.json())
+      fetch('/api/trades?limit=15').then(r => r.json())
     ]);
+
+    // Detect if we should filter by a specific trader (e.g. if we are NOT admin)
+    const currentUser = users.find(u => u.username === status.username || u.chatId === status.username);
+    const monitoredTrader = currentUser?.config?.traderAddress;
+    
+    if (monitoredTrader) {
+        document.getElementById('trade-title').textContent = `Atividades Recentes: ${monitoredTrader.slice(0,6)}...${monitoredTrader.slice(-4)}`;
+    }
 
     document.getElementById('uptime').textContent = 'Uptime: ' + Math.floor(status.uptime/3600) + 'h ' + Math.floor((status.uptime%3600)/60) + 'm';
     document.getElementById('st-users').textContent = status.totalUsers;
@@ -926,8 +952,8 @@ async function refresh() {
     tradeBody.innerHTML = trades.map(t => \`
       <tr>
         <td style="color: var(--text-dim); font-size: 0.8rem">\${new Date(t.timestamp).toLocaleTimeString()}</td>
-        <td>\${t.processedBy?.length > 0 ? t.processedBy.join(', ') : '---'}</td>
-        <td style="font-family: monospace; font-size: 0.8rem">\${t.traderAddress.slice(0,6)}...</td>
+        <td>\${t.processedBy?.length > 0 ? '✓ Copiado' : '---'}</td>
+        <td style="font-weight: 600; color: var(--accent)">\${t.displayTrader || (t.traderAddress.slice(0,6) + '...')}</td>
         <td><span style="color: \${t.side === 'BUY' ? 'var(--success)' : 'var(--danger)'}">\${t.side}</span></td>
         <td>$\${(t.usdcSize || 0).toFixed(2)}</td>
         <td style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">\${t.title || t.slug}</td>
