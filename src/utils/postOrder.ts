@@ -43,10 +43,12 @@ const isInsufficientBalanceOrAllowanceError = (message: string | undefined): boo
     return lower.includes('not enough balance') || lower.includes('allowance') || lower.includes('insufficient balance');
 };
 
-const recordStatus = async (activityId: string, followerId: string, status: string, details?: string, extra?: Record<string, any>) => {
+const recordStatus = async (activityId: string, followerId: string, status: string, details?: string, extra?: Record<string, any>, traderAddress?: string) => {
     try {
         console.log(`[RECORD_STATUS] ${followerId} -> ${status}: ${details || ''} ${extra ? JSON.stringify(extra) : ''}`);
-        await Activity.updateOne(
+        // BUG FIX: Use trader-specific Activity model instead of global Activity
+        const ActivityModel = traderAddress ? getUserActivityModel(traderAddress) : Activity;
+        await ActivityModel.updateOne(
             { _id: activityId },
             { $set: { [`followerStatuses.${followerId}`]: { status, details, timestamp: new Date(), ...extra } } }
         );
@@ -65,7 +67,8 @@ const postOrder = async (
     followerId: string,
     userConfig: any,
     my_positions: UserPositionInterface[] = [],
-    proxyAddress?: string
+    proxyAddress?: string,
+    traderAddress?: string
 ) => {
     const isMirror100 = userConfig.mode === 'MIRROR_100';
     const config = {
@@ -83,29 +86,29 @@ const postOrder = async (
 
     if (!isMirror100) {
         if (condition === 'buy' && config.copyBuy === false) {
-            await recordStatus(trade._id, followerId, 'PULADO (LADO)', 'Compra desativada nas configurações');
+            await recordStatus(trade._id, followerId, 'PULADO (LADO)', 'Compra desativada nas configurações', undefined, traderAddress);
             return;
         }
         if (condition === 'sell' && config.copySell === false) {
-            await recordStatus(trade._id, followerId, 'PULADO (LADO)', 'Venda desativada nas configurações');
+            await recordStatus(trade._id, followerId, 'PULADO (LADO)', 'Venda desativada nas configurações', undefined, traderAddress);
             return;
         }
 
         if (config.minPrice > 0 && tradePrice < config.minPrice) {
-            await recordStatus(trade._id, followerId, 'PULADO (PREÇO)', `Preço $${tradePrice} abaixo do mínimo $${config.minPrice}`);
+            await recordStatus(trade._id, followerId, 'PULADO (PREÇO)', `Preço $${tradePrice} abaixo do mínimo $${config.minPrice}`, undefined, traderAddress);
             return;
         }
         if (config.maxPrice > 0 && tradePrice > config.maxPrice) {
-            await recordStatus(trade._id, followerId, 'PULADO (PREÇO)', `Preço $${tradePrice} acima do máximo $${config.maxPrice}`);
+            await recordStatus(trade._id, followerId, 'PULADO (PREÇO)', `Preço $${tradePrice} acima do máximo $${config.maxPrice}`, undefined, traderAddress);
             return;
         }
 
         if (config.minTradeSize > 0 && tradeSizeUSD < config.minTradeSize) {
-            await recordStatus(trade._id, followerId, 'PULADO (TAMANHO)', `Tamanho $${tradeSizeUSD} abaixo do mínimo $${config.minTradeSize}`);
+            await recordStatus(trade._id, followerId, 'PULADO (TAMANHO)', `Tamanho $${tradeSizeUSD} abaixo do mínimo $${config.minTradeSize}`, undefined, traderAddress);
             return;
         }
         if (config.maxTradeSize > 0 && tradeSizeUSD > config.maxTradeSize) {
-            await recordStatus(trade._id, followerId, 'PULADO (TAMANHO)', `Tamanho $${tradeSizeUSD} acima do máximo $${config.maxTradeSize}`);
+            await recordStatus(trade._id, followerId, 'PULADO (TAMANHO)', `Tamanho $${tradeSizeUSD} acima do máximo $${config.maxTradeSize}`, undefined, traderAddress);
             return;
         }
     }
@@ -128,14 +131,14 @@ const postOrder = async (
 
         const minOrderCheck = config.mode === 'MIRROR_100' ? 0 : (config.minOrderSizeUSD || 0);
         if (orderCalc.finalAmount < (minOrderCheck - 0.001)) {
-            await recordStatus(trade._id, followerId, 'PULADO (ESTRATÉGIA)', orderCalc.reasoning);
+            await recordStatus(trade._id, followerId, 'PULADO (ESTRATÉGIA)', orderCalc.reasoning, undefined, traderAddress);
             return;
         }
 
         if (!isMirror100) {
             const totalExposure = my_positions.reduce((sum, pos) => sum + (pos.currentValue || 0), 0);
             if (config.maxExposure > 0 && (totalExposure + orderCalc.finalAmount) > config.maxExposure) {
-                await recordStatus(trade._id, followerId, 'PULADO (EXPOSIÇÃO)', 'Exposição máxima atingida');
+                await recordStatus(trade._id, followerId, 'PULADO (EXPOSIÇÃO)', 'Exposição máxima atingida', undefined, traderAddress);
                 return;
             }
         }
@@ -147,13 +150,13 @@ const postOrder = async (
             try {
                 const orderBook = await clobClient.getOrderBook(trade.asset);
                 if (!orderBook.asks || orderBook.asks.length === 0) {
-                    await recordStatus(trade._id, followerId, 'PULADO (LIQUIDEZ)', 'Sem ofertas no book');
+                    await recordStatus(trade._id, followerId, 'PULADO (LIQUIDEZ)', 'Sem ofertas no book', undefined, traderAddress);
                     break;
                 }
 
                 const bestAsk = orderBook.asks[0];
                 if (!isMirror100 && parseFloat(bestAsk.price) - slippage > trade.price) {
-                    await recordStatus(trade._id, followerId, 'PULADO (SLIPPAGE)', 'Slippage muito alto');
+                    await recordStatus(trade._id, followerId, 'PULADO (SLIPPAGE)', 'Slippage muito alto', undefined, traderAddress);
                     break;
                 }
 
@@ -185,16 +188,16 @@ const postOrder = async (
                         myEntryAmount: orderSizeUSD,
                         myEntryPrice: parseFloat(bestAsk.price),
                         myExecutedAt: new Date(),
-                    });
+                    }, traderAddress);
                     telegram.tradeExecuted(followerId, 'BUY', orderSizeUSD, parseFloat(bestAsk.price), trade.slug || trade.title);
                 } else {
                     const err = extractOrderError(resp);
                     if (isInsufficientBalanceOrAllowanceError(err)) {
-                        await recordStatus(trade._id, followerId, 'ERRO (SALDO)', err);
+                        await recordStatus(trade._id, followerId, 'ERRO (SALDO)', err, undefined, traderAddress);
                         break;
                     }
                     retry++;
-                    if (retry >= retryLimit) await recordStatus(trade._id, followerId, 'ERRO (API)', err);
+                    if (retry >= retryLimit) await recordStatus(trade._id, followerId, 'ERRO (API)', err, undefined, traderAddress);
                 }
             } catch (e: any) {
                 Logger.error(`[BUY] Loop error: ${e.message}`);
@@ -233,7 +236,7 @@ const postOrder = async (
                         myEntryAmount: sellSize * parseFloat(bestBid.price),
                         myEntryPrice: parseFloat(bestBid.price),
                         myExecutedAt: new Date(),
-                    });
+                    }, traderAddress);
                 } else {
                     retry++;
                 }

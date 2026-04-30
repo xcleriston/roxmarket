@@ -158,7 +158,8 @@ export const processDetectedTrade = async (trade: any, traderAddressParam?: stri
                     followerId,
                     follower.config,
                     my_positions,
-                    targetAddr
+                    targetAddr,
+                    traderAddress
                 );
             }
         } catch (error) {

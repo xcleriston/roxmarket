@@ -42,25 +42,45 @@ const getMyBalance = async (clientOrAddress: ClobClient | string): Promise<numbe
 
         const pusdAddr = ENV.USDC_CONTRACT_ADDRESS || '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
         let finalBalance = 0;
+        let lastError: any = null;
 
         for (const rpc of RPC_LIST) {
             try {
-                const provider = new ethers.providers.StaticJsonRpcProvider({ url: rpc, skipFetchSetup: true }, 137);
+                // BUG FIX: Add timeout to prevent hanging on slow RPCs
+                const provider = new ethers.providers.StaticJsonRpcProvider(
+                    { url: rpc, skipFetchSetup: true, timeout: 5000 }, 
+                    137
+                );
                 const contract = new ethers.Contract(pusdAddr, PUSD_ABI, provider);
-                const bal = await contract.balanceOf(address);
+                
+                // Add timeout promise
+                const balancePromise = contract.balanceOf(address);
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('RPC timeout')), 5000)
+                );
+                
+                const bal = await Promise.race([balancePromise, timeoutPromise]) as any;
                 finalBalance = parseFloat(ethers.utils.formatUnits(bal, 6));
                 
                 if (finalBalance >= 0) {
+                    Logger.debug(`[BALANCE] Fetched ${finalBalance.toFixed(2)} from ${rpc}`);
                     break; // Success
                 }
-            } catch (rpcErr) {
+            } catch (rpcErr: any) {
+                lastError = rpcErr;
+                Logger.warning(`[BALANCE] RPC ${rpc} failed: ${rpcErr.message}`);
                 continue;
             }
+        }
+
+        if (finalBalance === 0 && lastError) {
+            Logger.error(`[BALANCE] All RPCs failed for ${address.slice(0,8)}...: ${lastError.message}`);
         }
 
         balanceCache.set(cacheKey, { balance: finalBalance, timestamp: Date.now() });
         return finalBalance;
     } catch (e: any) {
+        Logger.error(`[BALANCE] Unexpected error: ${e.message}`);
         return 0;
     }
 };
