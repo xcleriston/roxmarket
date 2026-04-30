@@ -161,6 +161,8 @@ app.get('/api/trades', async (req, res) => {
         const users = await User.default.find({ 'config.traderAddress': { $exists: true, $ne: '' } });
         const traderAddresses = Array.from(new Set(users.map((u: any) => u.config.traderAddress!.toLowerCase())));
         
+        console.log('[DEBUG] Monitored trader addresses:', traderAddresses);
+        
         // Fetch from global Activity model with explicit traderAddress filter
         // Also ensure traderAddress exists and is not empty
         const dbTrades = await Activity.find({ 
@@ -169,6 +171,9 @@ app.get('/api/trades', async (req, res) => {
             .sort({ timestamp: -1 })
             .limit(limit)
             .lean();
+
+        console.log('[DEBUG] Fetched trades count:', dbTrades.length);
+        console.log('[DEBUG] Sample trader addresses from fetched trades:', dbTrades.slice(0, 3).map((t: any) => t.traderAddress));
 
         const trades = dbTrades.map((trade: any) => ({
             ...trade,
