@@ -162,14 +162,15 @@ app.get('/api/trades', async (req, res) => {
         const traderAddresses = Array.from(new Set(users.map((u: any) => u.config.traderAddress!.toLowerCase())));
         
         // Fetch from global Activity model with explicit traderAddress filter
+        // Also ensure traderAddress exists and is not empty
         const dbTrades = await Activity.find({ 
-            traderAddress: { $in: traderAddresses } 
+            traderAddress: { $in: traderAddresses, $exists: true, $ne: '' } 
         })
             .sort({ timestamp: -1 })
             .limit(limit)
             .lean();
 
-        const trades = dbTrades.map(trade => ({
+        const trades = dbTrades.map((trade: any) => ({
             ...trade,
             isCopied: trade.bot === true || (trade.processedBy && trade.processedBy.length > 0)
         }));
