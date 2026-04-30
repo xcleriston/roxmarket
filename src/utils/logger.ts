@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
+import { redactSecrets } from './security.js';
 
 class Logger {
     private static logsDir = path.join(process.cwd(), 'logs');
@@ -22,7 +23,7 @@ class Logger {
             this.ensureLogsDir();
             const logFile = this.getLogFileName();
             const timestamp = new Date().toISOString();
-            const logEntry = `[${timestamp}] ${message}\n`;
+            const logEntry = redactSecrets(`[${timestamp}] ${message}\n`);
             fs.appendFileSync(logFile, logEntry, 'utf8');
         } catch (error) {
             // Silently fail to avoid infinite loops
@@ -51,7 +52,7 @@ class Logger {
     }
 
     static info(message: string) {
-        console.log(chalk.blue('ℹ'), message);
+        console.log(chalk.blue('ℹ'), redactSecrets(message));
         this.writeToFile(`INFO: ${message}`);
     }
 
@@ -71,7 +72,7 @@ class Logger {
     }
 
     static error(message: string) {
-        console.log(chalk.red('✗'), message);
+        console.log(chalk.red('✗'), redactSecrets(message));
         this.writeToFile(`ERROR: ${message}`);
     }
 

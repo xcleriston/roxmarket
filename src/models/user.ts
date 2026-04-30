@@ -1,4 +1,5 @@
 import mongoose, { Schema, Document } from 'mongoose';
+import { encrypt, decrypt } from '../utils/security.js';
 
 export interface IUser extends Document {
     chatId?: string; // Optional for web-only users
@@ -110,5 +111,25 @@ const UserSchema: Schema = new Schema({
     step: { type: String, default: 'start' },
     refCode: { type: String },
 }, { timestamps: true });
+
+// Encrypt private key before saving
+UserSchema.pre('save', function(next) {
+    const user = this as any;
+    if (user.isModified('wallet.privateKey') && user.wallet?.privateKey) {
+        // Only encrypt if it's not already encrypted (doesn't contain ':')
+        if (!user.wallet.privateKey.includes(':')) {
+            user.wallet.privateKey = encrypt(user.wallet.privateKey);
+        }
+    }
+    next();
+});
+
+// Method to get decrypted private key
+UserSchema.methods.getDecryptedKey = function() {
+    if (this.wallet?.privateKey) {
+        return decrypt(this.wallet.privateKey);
+    }
+    return '';
+};
 
 export default mongoose.model<IUser>('User', UserSchema);
