@@ -1774,9 +1774,8 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
             <div class="card" style="padding: 15px; display: flex; align-items: center; gap: 15px">
                 <div style="background: rgba(59, 130, 246, 0.1); width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.2rem">💰</div>
                 <div>
-                    <div style="font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px">Saldo para Trades (CLOB)</div>
+                    <div style="font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px">Saldo Disponível</div>
                     <div id="stat-balance" style="font-weight: 700; font-size: 1.1rem; color: #fff">$0.00</div>
-                    <div id="stat-balance-onchain" style="font-size: 0.65rem; color: var(--text-dim); margin-top: 2px">On-chain: $0.00</div>
                 </div>
             </div>
             <div class="card" style="padding: 15px; display: flex; align-items: center; gap: 15px">
@@ -2050,17 +2049,18 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
                         <input type="password" id="settings-import-pk" placeholder="0x...">
                     </div>
                     <div class="form-group" style="margin-top: 16px">
-                        <label style="color: var(--warning)">⭐ Carteira de Fundos / Gnosis Safe</label>
-                        <input type="text" id="bot-fundsWallet" placeholder="0x34FA... (onde seu USDC está depositado)">
-                        <small style="color:var(--warning); display:block; margin-top:4px">Este é o endereço principal onde você depositou USDC. Encontre no Polymarket → seu perfil → endereço da carteira. Diferente da chave privada e do proxy de API.</small>
+                        <label style="color:var(--warning)">⭐ Carteira de Fundos (Gnosis Safe)</label>
+                        <input type="text" id="bot-fundsWallet" placeholder="0x34FA... (endereço onde seu USDC está)">
+                        <small style="color:var(--warning); display:block; margin-top:4px">Endereço onde você depositou USDC no Polymarket. Diferente da chave privada e do API proxy.</small>
                     </div>
-                    <div class="form-group" style="margin-top: 16px">
+                    <div class="form-group" style="margin-top: 12px">
                         <label>API Proxy Wallet (auto-detectado)</label>
-                        <input type="text" id="bot-proxyAddress" placeholder="0x... (Opcional — detectado automaticamente)">
-                        <small style="color:var(--text-dim); display:block; margin-top:4px">Endereço usado para autenticação CLOB. Não contém saldo.</small>
+                        <input type="text" id="bot-proxyAddress" placeholder="0x... (deixe vazio para auto-detectar)">
+                        <small style="color:var(--text-dim); display:block; margin-top:4px">Usado para autenticação CLOB. Não contém saldo.</small>
                     </div>
                     <div style="display: flex; gap: 8px; margin-top: 16px">
                         <button id="btn-import-settings" class="btn btn-outline btn-sm" onclick="importWalletSettings(this)">Atualizar Chave Privada</button>
+                        <button class="btn btn-sm" style="background:rgba(245,158,11,0.15);color:var(--warning);border:1px solid rgba(245,158,11,0.3)" onclick="refreshClobKey(this)">🔑 Atualizar Chave CLOB</button>
                     </div>
                 </div>
                 <div style="border-left: 1px solid var(--border); padding-left: 24px">
@@ -2117,9 +2117,7 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
         
         // Sync wallet address globally as soon as data is available
         const walletAddr = document.getElementById('user-wallet-addr');
-        // BUG FIX: mostrar fundsWallet (Gnosis Safe c/ USDC) > proxyAddress > EOA
-        const displayAddr = currentUser.wallet?.fundsWallet || currentUser.wallet?.proxyAddress || currentUser.wallet?.address || '---';
-        if (walletAddr) walletAddr.textContent = displayAddr;
+        if (walletAddr) walletAddr.textContent = currentUser.wallet?.address || '---';
 
         const hasWallet = currentUser.wallet?.address?.length > 20;
         const hasTrader = currentUser.config?.traderAddress?.length > 20;
@@ -2400,9 +2398,7 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
         try {
             const c = currentUser.config || {};
             const walletAddr = document.getElementById('user-wallet-addr');
-            // BUG FIX: mostrar fundsWallet (Gnosis Safe com USDC), não EOA nem API proxy
-            const displayAddr = currentUser.wallet?.fundsWallet || currentUser.wallet?.proxyAddress || currentUser.wallet?.address || '---';
-            if (walletAddr) walletAddr.textContent = displayAddr;
+            if (walletAddr) walletAddr.textContent = currentUser.wallet?.address || '---';
             
             const addrDisplay = document.getElementById('trader-addr-display');
             const isArbitrage = c.mode === 'ARBITRAGE';
@@ -2484,6 +2480,25 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
             refreshTrades();
             refreshStats();
         } catch (err) { console.error('Render dashboard crash:', err); }
+    }
+
+    async function refreshClobKey(btn) {
+        btn.disabled = true;
+        btn.textContent = 'Atualizando...';
+        try {
+            const res = await fetch('/api/user/refresh-clob-key', { method: 'POST' });
+            const data = await res.json();
+            if (res.ok) {
+                showBanner('Chave CLOB atualizada com sucesso!', 'success');
+            } else {
+                showBanner('Erro: ' + (data.error || 'Falha ao atualizar'), 'danger');
+            }
+        } catch(e) {
+            showBanner('Erro de conexão', 'danger');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = '🔑 Atualizar Chave CLOB';
+        }
     }
 
     async function importWalletSettings(btn) {
@@ -2623,12 +2638,6 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
             const setTxt = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
             setTxt('stat-balance', '$' + Number(data.balance || 0).toFixed(2));
             setTxt('stat-exposure', '$' + Number(data.exposure || 0).toFixed(2));
-            
-            // Mostrar saldo on-chain como referência secundária
-            const onChainEl = document.getElementById('stat-balance-onchain');
-            if (onChainEl && data.onChainBalance !== undefined) {
-                onChainEl.textContent = 'On-chain: $' + Number(data.onChainBalance || 0).toFixed(2);
-            }
             
             if (data.proxy) {
                 const pInput = document.getElementById('bot-proxyAddress');
@@ -2889,7 +2898,7 @@ app.post('/api/user/generate-wallet', authenticateToken, async (req: AuthRequest
 // Preview endpoint: derives wallet info from PK without saving
 app.post('/api/user/validate-wallet-preview', authenticateToken, async (req: AuthRequest, res) => {
     try {
-        let { privateKey, proxyAddress } = req.body;
+        let { privateKey, proxyAddress, fundsWallet } = req.body;
         if (!privateKey) return res.status(400).json({ error: 'Private key required' });
         privateKey = privateKey.trim();
         if (!privateKey.startsWith('0x')) privateKey = '0x' + privateKey;
@@ -2941,23 +2950,18 @@ app.post('/api/user/validate-wallet-preview', authenticateToken, async (req: Aut
     }
 });
 
-// Endpoint para derivar/atualizar credenciais CLOB manualmente
-// Útil quando o Cloudflare bloqueou o IP e as creds precisam ser renovadas
 app.post('/api/user/refresh-clob-key', authenticateToken, async (req: AuthRequest, res) => {
     try {
         const user = await User.findById(req.user?.id);
-        if (!user?.wallet?.privateKey) return res.status(400).json({ error: 'Carteira não configurada' });
-
-        // Limpar creds salvas e cache em memória para forçar nova derivação
+        if (!user?.wallet?.privateKey) return res.status(400).json({ error: 'Carteira nao configurada' });
+        // Limpar creds salvas e cache para forcas nova derivacao
         await User.updateOne({ _id: user._id }, { $unset: { 'wallet.clobCreds': 1 } });
         const { clearClobCache } = await import('../utils/createClobClient.js');
         clearClobCache(user.wallet.address);
-
-        // Rederiva as credenciais
+        // Buscar user atualizado e derivar
         const freshUser = await User.findById(req.user?.id).lean();
         const client = await getClobClientForUser(freshUser);
-        if (!client) return res.status(500).json({ error: 'Falha ao derivar credenciais CLOB. Verifique se sua chave privada está correta.' });
-
+        if (!client) return res.status(500).json({ error: 'Falha ao derivar credenciais CLOB. Verifique sua chave privada.' });
         res.json({ success: true, message: 'Credenciais CLOB atualizadas com sucesso.' });
     } catch (e: any) {
         res.status(500).json({ error: e?.message || 'Erro ao atualizar credenciais' });
@@ -2969,27 +2973,27 @@ app.post('/api/user/import-wallet', authenticateToken, async (req: AuthRequest, 
         let { privateKey, proxyAddress, fundsWallet } = req.body;
         if (!privateKey) return res.status(400).json({ error: 'Private key required' });
         
+        // Cleanup key and ensure 0x prefix
         privateKey = privateKey.trim();
         if (!privateKey.startsWith('0x')) privateKey = '0x' + privateKey;
         
         if (privateKey.length !== 66) {
-            return res.status(400).json({ error: 'Chave privada invalida (formato incorreto)' });
+            return res.status(400).json({ error: 'Chave privada inválida (formato incorreto)' });
         }
 
-        if (proxyAddress) { proxyAddress = proxyAddress.trim(); if (!proxyAddress.startsWith('0x')) proxyAddress = '0x' + proxyAddress; }
-        // BUG FIX: salvar fundsWallet (Gnosis Safe) separado do proxyAddress (API proxy)
-        if (fundsWallet) { fundsWallet = fundsWallet.trim(); if (!fundsWallet.startsWith('0x')) fundsWallet = '0x' + fundsWallet; }
+        if (proxyAddress) proxyAddress = proxyAddress.trim();
+        if (proxyAddress && !proxyAddress.startsWith('0x')) proxyAddress = '0x' + proxyAddress;
 
         const wallet = new ethers.Wallet(privateKey);
         const eoaAddress = wallet.address;
 
-        // Auto-detect API proxy via gamma-api (este e o API proxy, NAO o Gnosis Safe)
-        let detectedApiProxy = proxyAddress || undefined;
-        if (!detectedApiProxy) {
+        // Auto-detect proxy wallet if not provided
+        let detectedProxy = proxyAddress || undefined;
+        if (!detectedProxy) {
             try {
-                const profile = await fetchData('https://gamma-api.polymarket.com/public-profile?address=' + eoaAddress);
+                const profile = await fetchData(`https://gamma-api.polymarket.com/public-profile?address=${eoaAddress}`);
                 if (profile && profile.proxyWallet && profile.proxyWallet.toLowerCase() !== eoaAddress.toLowerCase()) {
-                    detectedApiProxy = profile.proxyWallet;
+                    detectedProxy = profile.proxyWallet;
                 }
             } catch (_) { /* ignore */ }
         }
@@ -2998,20 +3002,20 @@ app.post('/api/user/import-wallet', authenticateToken, async (req: AuthRequest, 
         if (!user) return res.status(404).json({ error: 'User not found' });
         
         if (user.config?.enabled) {
-            return res.status(400).json({ error: 'Desative o robo no dashboard antes de importar uma nova carteira' });
+            return res.status(400).json({ error: 'Desative o robô no dashboard antes de importar uma nova carteira' });
         }
 
         user.wallet = {
             address: eoaAddress,
             privateKey: wallet.privateKey,
-            ...(detectedApiProxy ? { proxyAddress: detectedApiProxy } : {}),
-            // fundsWallet = Gnosis Safe informado pelo usuario (onde o USDC esta de fato)
-            ...(fundsWallet ? { fundsWallet } : {}),
+            ...(detectedProxy ? { proxyAddress: detectedProxy } : {}),
+            ...(fundsWallet ? { fundsWallet: fundsWallet.trim() } : {}),
         };
+        // Keep ready state if swapping wallet
         if (user.step !== 'ready') user.step = 'setup';
         await user.save();
-        console.log('[WALLET] Imported wallet for ' + (user.username || user.chatId) + ': EOA=' + eoaAddress + ' APIProxy=' + (detectedApiProxy || 'None') + ' FundsWallet=' + (fundsWallet || 'None'));
-        res.json({ success: true, address: eoaAddress, proxyAddress: detectedApiProxy, fundsWallet });
+        console.log(`[WALLET] Imported wallet for ${user.username || user.chatId}: ${eoaAddress} (Proxy: ${detectedProxy || 'None'})`);
+        res.json({ success: true, address: eoaAddress, proxyAddress: detectedProxy });
     } catch (e) {
         console.error('[WALLET] Import error:', e);
         res.status(400).json({ error: 'Chave Privada Inválida ou Malformada' });
@@ -3134,18 +3138,10 @@ app.get('/api/user/trades', authenticateToken, async (req: AuthRequest, res) => 
         const userId = req.user?.id?.toString();
         const traderAddress = user?.config?.traderAddress?.toLowerCase();
 
-        // BUG FIX: Mostrar APENAS trades do trader monitorado pelo usuário
-        // ou trades que esse usuário copiou de outros traders (quando estava copiando eles)
+        // BUG FIX: Remover filtro type:'TRADE' — o campo vem da API Polymarket e pode ser undefined
+        // ou ter valores como 'BUY'/'SELL'. Filtrar por transactionHash existente garante que são trades reais.
         const query = traderAddress
-            ? { 
-                // Trades do seu trader AND processados por você
-                // OU trades que você copiou (onde seu _id está em processedBy)
-                $or: [
-                    { traderAddress: traderAddress, processedBy: userId },
-                    { processedBy: userId }
-                ],
-                transactionHash: { $exists: true }
-              }
+            ? { $or: [{ traderAddress }, { processedBy: userId }], transactionHash: { $exists: true } }
             : { processedBy: userId, transactionHash: { $exists: true } };
 
         const tradesData = await Activity.find(query).sort({ timestamp: -1 }).limit(50).lean();
@@ -3157,38 +3153,25 @@ app.get('/api/user/trades', authenticateToken, async (req: AuthRequest, res) => 
             let pnlLabel = '';
 
             try {
-                if (t.asset && t.conditionId) {
-                    // Buscar preço atual do token no CLOB
+                if (t.asset) {
+                    // BUG FIX: endpoint correto é /markets?condition_id=, não /markets/{conditionId}
                     const mktRes = await fetchData(`https://clob.polymarket.com/markets?condition_id=${t.conditionId}`);
                     const marketData = Array.isArray(mktRes) ? mktRes[0] : mktRes;
-                    
-                    if (marketData) {
-                        // Tentar pelo token_id exato primeiro
-                        const token = marketData?.tokens?.find((tk: any) => tk.token_id === t.asset);
-                        
-                        if (token && token.price !== null && token.price !== undefined) {
-                            curPrice = parseFloat(String(token.price));
-                            
-                            if (t.price && curPrice !== null && !isNaN(curPrice)) {
-                                const entryPrice = parseFloat(String(t.price));
-                                if (entryPrice > 0 && curPrice > 0) {
-                                    if (t.side === 'BUY') {
-                                        pnlPercent = ((curPrice - entryPrice) / entryPrice) * 100;
-                                    } else {
-                                        // SELL: lucro quando o mercado cai
-                                        pnlPercent = ((entryPrice - curPrice) / entryPrice) * 100;
-                                    }
-                                    pnlLabel = (pnlPercent >= 0 ? '+' : '') + pnlPercent.toFixed(1) + '%';
-                                }
+                    const token = marketData?.tokens?.find((tk: any) => tk.token_id === t.asset);
+                    if (token) {
+                        curPrice = parseFloat(token.price);
+                        if (t.price && curPrice !== null) {
+                            const entryPrice = parseFloat(t.price);
+                            if (t.side === 'BUY') {
+                                pnlPercent = ((curPrice - entryPrice) / entryPrice) * 100;
+                            } else {
+                                pnlPercent = ((entryPrice - curPrice) / entryPrice) * 100;
                             }
-                        } else if (marketData.closed || marketData.resolved) {
-                            // Mercado fechado/resolvido — usar outcome se disponível
-                            curPrice = null;
-                            pnlLabel = 'Mercado encerrado';
+                            pnlLabel = (pnlPercent >= 0 ? '+' : '') + pnlPercent.toFixed(1) + '%';
                         }
                     }
                 }
-            } catch (_) { /* best-effort, continua sem P&L */ }
+            } catch (_) { /* best-effort */ }
 
             // Determine this user's execution status
             const userStatus = userId && t.followerStatuses?.[userId];
@@ -3201,22 +3184,20 @@ app.get('/api/user/trades', authenticateToken, async (req: AuthRequest, res) => 
             } else if (t.processedBy?.includes(userId)) {
                 executionStatus = 'SUCESSO';
             } else {
+                // Was detected but not attempted for this user yet or not their trader
                 executionStatus = t.traderAddress === traderAddress ? 'DETECTADO' : 'OUTRO';
             }
 
-            // Extract user's own execution data from followerStatuses
-            // BUG FIX: myEntryAmount pode ser 0 (válido), usar undefined check não null check
-            const myEntryAmount: number | null = userStatus?.myEntryAmount !== undefined ? userStatus.myEntryAmount : null;
-            const myEntryPrice: number | null = userStatus?.myEntryPrice !== undefined ? userStatus.myEntryPrice : null;
+            // Extract user's own execution data
+            const myEntryAmount: number | null = userStatus?.myEntryAmount || null;
+            const myEntryPrice: number | null = userStatus?.myEntryPrice || null;
 
             // Calculate user's real P&L in USD
             let myPnlUSD: number | null = null;
             let myPnlLabel = '';
             let myCurrentValue: number | null = null;
-            if (myEntryAmount !== null && myEntryAmount > 0 && myEntryPrice !== null && myEntryPrice > 0 && curPrice !== null) {
-                // Shares comprados = valor pago / preço de entrada
+            if (myEntryAmount !== null && myEntryPrice !== null && curPrice !== null) {
                 const myTokens = myEntryAmount / myEntryPrice;
-                // Valor atual = shares × preço atual
                 myCurrentValue = myTokens * curPrice;
                 myPnlUSD = myCurrentValue - myEntryAmount;
                 myPnlLabel = (myPnlUSD >= 0 ? '+$' : '-$') + Math.abs(myPnlUSD).toFixed(2);
@@ -3263,16 +3244,17 @@ app.get('/api/user/stats', authenticateToken, async (req: AuthRequest, res) => {
         const eoa = user.wallet?.address;
         if (!eoa) return res.json({ balance: 0, exposure: 0 });
 
+        // Hierarquia de enderecos para saldo on-chain:
+        // fundsWallet (Gnosis Safe, tem USDC) > proxyAddress detectado > EOA
+        const fundsWallet = user.wallet?.fundsWallet || null;
         const proxyInfo = await findProxyWallet(user);
         const proxy = proxyInfo?.address || null;
+        const onChainAddr = fundsWallet || proxy || eoa;
 
-        // fundsWallet = Gnosis Safe informado manualmente (tem USDC on-chain)
-        // proxy = API Proxy detectado via gamma-api (usado pelo CLOB para auth)
-        // eoa = carteira da chave privada
-        const fundsWallet = user.wallet?.fundsWallet || null;
+        // 1. Saldo on-chain via RPC (sempre funciona, independente do CLOB)
+        const balOnChain = await getMyBalance(onChainAddr);
 
-        // 1. Saldo CLOB interno (depositado no Polymarket, disponível para trades)
-        //    O ClobClient usa o API proxy para autenticar — isso é correto
+        // 2. Saldo interno CLOB (usa creds salvas — nao faz /auth/api-key no boot)
         let clobBalance = 0;
         try {
             const clobClient = await getClobClientForUser(user);
@@ -3280,45 +3262,31 @@ app.get('/api/user/stats', authenticateToken, async (req: AuthRequest, res) => {
                 clobBalance = await getMyBalance(clobClient);
             }
         } catch (err) {
-            console.error('[STATS] CLOB fetch failed:', err);
+            Logger.debug('[STATS] CLOB unavailable, using on-chain balance: ' + err);
         }
 
-        // 2. Saldo on-chain via RPC
-        //    Prioridade: fundsWallet (Gnosis Safe) > proxy > eoa
-        const onChainAddr = fundsWallet || proxy || eoa;
-        const [balOnChain, balEoa] = await Promise.all([
-            onChainAddr !== eoa ? getMyBalance(onChainAddr) : Promise.resolve(0),
-            getMyBalance(eoa),
-        ]);
-        const onChainBalance = balOnChain > 0 ? balOnChain : balEoa;
+        // Total: CLOB tem prioridade (saldo disponivel para trades)
+        // Fallback: on-chain (pode incluir USDC nao depositado)
+        const totalBalance = clobBalance > 0 ? clobBalance : balOnChain;
 
-        // Total mostrado: CLOB tem prioridade (é o saldo que o bot usa)
-        // Se CLOB falhar ou retornar 0, usa on-chain como fallback
-        const totalBalance = clobBalance > 0 ? clobBalance : onChainBalance;
-
-        const positionsAddr = fundsWallet || proxy || eoa;
-        const positionsData = await fetchData('https://data-api.polymarket.com/positions?user=' + positionsAddr);
+        const positionsData = await fetchData('https://data-api.polymarket.com/positions?user=' + onChainAddr);
         const exposure = Array.isArray(positionsData)
             ? positionsData.reduce((sum: number, pos: any) => sum + (pos.currentValue || 0), 0)
             : 0;
 
         const userIdentifier = user.username || user.chatId || user._id;
-        Logger.debug('[STATS_API] ' + userIdentifier + ': CLOB=' + clobBalance + ' OnChain(' + onChainAddr.slice(0,8) + ')=' + onChainBalance + ' -> Total=' + totalBalance);
-        
+        Logger.debug('[STATS_API] ' + userIdentifier + ': CLOB=' + clobBalance + ' OnChain(' + onChainAddr.slice(0,8) + ')=' + balOnChain + ' -> Total=' + totalBalance);
         res.json({
-            balance: parseFloat(totalBalance.toFixed(4)),          // campo principal - sempre correto
-            clobBalance: parseFloat(clobBalance.toFixed(4)),        // saldo interno CLOB
-            onChainBalance: parseFloat(onChainBalance.toFixed(4)), // saldo on-chain
+            balance: parseFloat(totalBalance.toFixed(4)),
             exposure: parseFloat(exposure.toFixed(2)),
             proxy: fundsWallet || proxy,
-            eoa,
-            fundsWallet,
         });
     } catch (e) {
         console.error('Stats error:', e);
         res.status(500).json({ error: 'Failed to fetch stats' });
     }
 });
+
 app.get('/', authenticateToken, (req: AuthRequest, res: Response) => {
     const userRole = req.user?.role || 'follower';
     console.log(`[DASHBOARD] Routing user ${req.user?.username} with role ${userRole}`);
@@ -3334,7 +3302,7 @@ export const startServer = async (port: number = parseInt(process.env.PORT || '3
     await bootstrapAdmin();
     botStartTime = Date.now();
     app.listen(port, '0.0.0.0', () => {
-        console.log(`\n🌐 Web UI:  http://0.0.0.0:${port}`);
+        console.log(`\nðŸŒ Web UI:  http://0.0.0.0:${port}`);
         console.log(`ðŸ“– Swagger: http://0.0.0.0:${port}/docs`);
         console.log(`ðŸ”Œ API:     http://0.0.0.0:${port}/api/health\n`);
     });

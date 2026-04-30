@@ -11,8 +11,11 @@ const TOO_OLD_TIMESTAMP = ENV.TOO_OLD_TIMESTAMP;
 const seenTradesLocal = new Set<string>();
 
 const getUniqueTraders = async (): Promise<string[]> => {
-    // REQUISITO CRÍTICO: Monitorar qualquer um que tenha traderAddress, ignorando travas de status se necessário
-    const users = await User.find({ 'config.traderAddress': { $exists: true, $ne: '' } });
+    // Monitorar APENAS traders de usuários com o bot habilitado
+    const users = await User.find({ 
+        'config.traderAddress': { $exists: true, $ne: '' },
+        'config.enabled': true   // FIX: só usuários com bot ativo
+    });
     const addresses = users.map(u => u.config.traderAddress!.toLowerCase());
     const unique = Array.from(new Set(addresses));
     
@@ -36,10 +39,9 @@ const fetchTradeDataForTrader = async (address: string) => {
 
         const cutoffTimestamp = Date.now() / 1000 - TOO_OLD_TIMESTAMP * 3600;
         
-        Logger.debug(`[MONITOR-${address.slice(0,6)}] Fetched ${activities?.length || 0} activities from API`);
+        console.log(`[DEBUG] Fetched ${activities?.length || 0} activities for ${address.slice(0,6)}`);
         if (activities?.length > 0) {
-            const latestAge = (Date.now() / 1000 - activities[0].timestamp);
-            Logger.debug(`[MONITOR-${address.slice(0,6)}] Latest activity age: ${latestAge.toFixed(1)}s, cutoff: ${(TOO_OLD_TIMESTAMP*3600).toFixed(0)}s`);
+            console.log(`[DEBUG] Latest activity timestamp: ${activities[0].timestamp} vs cutoff: ${cutoffTimestamp}`);
         }
         
         // Process activities in reverse (oldest first) to ensure correct sequence
@@ -91,8 +93,6 @@ const fetchTradeDataForTrader = async (address: string) => {
                 name: activity.name,
                 bot: false,
                 botExcutedTime: 0,
-                processedBy: [], // BUG FIX: inicializar como array vazio para rastrear quem processou
-                followerStatuses: {}, // Track detailed execution status per follower
             });
 
             await newTrade.save();

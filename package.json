@@ -8,7 +8,7 @@
         "help": "ts-node src/scripts/help.ts",
         "setup": "ts-node src/scripts/setup.ts",
         "build": "tsc",
-        "prestart": "echo \"Starting PolyCopy SaaS...\"",
+        "prestart": "npm audit --omit=dev || true",
         "start": "node dist/index.js",
         "dev": "ts-node src/index.ts",
         "telegram": "node dist/telegram/index.js",
@@ -46,8 +46,7 @@
         "check-secrets": "bash scripts/check-env-safety.sh",
         "format": "prettier --write .",
         "test": "jest --forceExit --detectOpenHandles",
-        "test:coverage": "jest --coverage --forceExit --detectOpenHandles",
-        "railway:start": "npm run build && node dist/index.js"
+        "test:coverage": "jest --coverage --forceExit --detectOpenHandles"
     },
     "keywords": [],
     "author": "",
@@ -81,7 +80,7 @@
         "@modelcontextprotocol/sdk": "^1.27.1",
         "@polymarket/clob-client-v2": "^1.0.2",
         "@seald-io/nedb": "^4.1.2",
-        "axios": "^1.8.4",
+        "axios": "^1.7.9",
         "bcryptjs": "^3.0.3",
         "chalk": "^5.4.1",
         "cookie-parser": "^1.4.7",
@@ -94,12 +93,6 @@
         "ora": "^8.2.0",
         "swagger-ui-express": "^5.0.1",
         "viem": "^2.48.4",
-        "web-push": "^3.6.7",
-        "express-rate-limit": "^7.5.0",
-        "socks-proxy-agent": "^8.0.5",
-        "undici": "^5.28.5"
-    },
-    "engines": {
-        "node": ">=18.0.0"
+        "web-push": "^3.6.7"
     }
 }

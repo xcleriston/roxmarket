@@ -36,25 +36,20 @@ export const processDetectedTrade = async (trade: any, traderAddressParam?: stri
     const traderAddress = (traderAddressParam || trade.traderAddress || "").toLowerCase();
     if (!traderAddress) return;
     
-    // BUG FIX: Buscar usuários que têm EXATAMENTE esse traderAddress configurado
-    // Não usar regex pois traderAddress é string simples, não array
-    // E ignorar o 'mode' - o usuário pode estar PAUSED mas ainda assim quer executar trades antigas
+    // Find all users following this trader in COPY mode
     const followers = await User.find({ 
-        'config.traderAddress': traderAddress
+        'config.traderAddress': { $regex: new RegExp(`^${traderAddress}$`, 'i') },
+        'config.mode': { $in: ['COPY', 'MIRROR_100'] }
     });
 
-    Logger.info(`[EXECUTOR] Found ${followers.length} followers for trader ${traderAddress.slice(0, 6)}...`);
+    console.log(`[DEBUG] Found ${followers.length} followers for trader ${traderAddress}`);
     if (followers.length === 0) {
-        // Log diagnostic info
+        // Log one user for comparison
         const sample = await User.findOne({ 'config.traderAddress': { $exists: true } });
         if (sample) {
-            Logger.debug(`[EXECUTOR DIAGNOSTIC] Sample user traderAddress=[${sample.config.traderAddress}] expected=[${traderAddress}]`);
+            console.log(`[DEBUG] Sample user traderAddress: [${sample.config.traderAddress}] vs target: [${traderAddress}]`);
         }
-        const totalUsers = await User.countDocuments({});
-        const usersWithTrader = await User.countDocuments({ 'config.traderAddress': { $exists: true, $ne: '' } });
-        Logger.warning(`[EXECUTOR] No followers found. Total users: ${totalUsers}, Users with traderAddress: ${usersWithTrader}`);
-        
-        // Mark trade as processed so we don't keep polling it forever
+        // No active followers, mark trade as done to stop polling
         await Activity.updateOne({ _id: trade._id }, { $set: { bot: true } });
         return;
     }
@@ -69,19 +64,21 @@ export const processDetectedTrade = async (trade: any, traderAddressParam?: stri
         Logger.header(`👤 FOLLOWER: ${followerId} copying ${traderAddress.slice(0, 6)}...`);
 
         try {
-            // BUG FIX: usar getClobClientForUser para AMBOS balance e execução
-            // Isso usa credenciais salvas no banco — sem chamadas repetidas ao /auth/api-key
-            // O cliente de execução é o mesmo (a API key do usuário já tem permissão para postar ordens)
-            const clobClient = await getClobClientForUser(follower);
+            // 1. User Client (For Balance/Positions - MUST be user-authenticated)
+            const clobClientBalance = await getClobClientForUser(follower);
+            
+            // 2. Execution Client (For POSTing orders - MUST be Builder-authenticated for performance)
+            const clobClientExecute = await createClobClient(
+                follower.wallet?.privateKey, 
+                follower.wallet?.proxyAddress, 
+                follower.wallet?.signatureType as any, 
+                true // FORCE BUILDER CREDENTIALS
+            );
 
-            if (!clobClient) {
-                Logger.error(`[${followerId}] Could not initialize CLOB client - skipping trade`);
+            if (!clobClientBalance || !clobClientExecute) {
+                Logger.error(`[${followerId}] Could not initialize CLOB clients - skipping trade`);
                 continue;
             }
-
-            // Alias para compatibilidade com o restante do código
-            const clobClientBalance = clobClient;
-            const clobClientExecute = clobClient;
             
             const proxyWallet = follower.wallet?.address;
             if (!proxyWallet) {

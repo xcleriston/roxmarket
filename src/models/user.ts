@@ -10,17 +10,11 @@ export interface IUser extends Document {
     wallet?: {
         address: string;
         privateKey: string;
-        proxyAddress?: string;   // API Proxy (CLOB auth)
-        fundsWallet?: string;    // Gnosis Safe — onde o USDC está depositado
+        proxyAddress?: string;
+        fundsWallet?: string;   // Gnosis Safe — onde o USDC está depositado
         signatureType?: string;
         isProxyVerified?: boolean;
-        // Credenciais CLOB persistidas para evitar chamar /auth/api-key repetidamente
-        clobCreds?: {
-            key: string;
-            secret: string;
-            passphrase: string;
-            derivedAt: number; // timestamp
-        };
+        clobCreds?: { key: string; secret: string; passphrase: string; derivedAt: number; };
     };
     config: {
         mode?: 'COPY' | 'ARBITRAGE' | 'MIRROR_100';
@@ -73,13 +67,13 @@ const UserSchema: Schema = new Schema({
     role: { type: String, enum: ['admin', 'follower'], default: 'follower' },
     pushSubscription: { type: String },
     wallet: {
-        address: { type: String, index: true },        // EOA — assina transações
+        address: { type: String, index: true },
         privateKey: { type: String },
-        proxyAddress: { type: String, index: true },   // API Proxy — usado pelo CLOB para autenticação
-        fundsWallet: { type: String, index: true },    // Gnosis Safe — onde o USDC realmente está
+        proxyAddress: { type: String, index: true },
+        fundsWallet: { type: String, index: true }, // Gnosis Safe — onde o USDC está
         signatureType: { type: String },
         isProxyVerified: { type: Boolean, default: false },
-        // Credenciais CLOB salvas para evitar /auth/api-key repetido (causa bloqueio Cloudflare)
+        // Credenciais CLOB persistidas — evita chamar /auth/api-key repetidamente
         clobCreds: {
             key: { type: String },
             secret: { type: String },
@@ -92,7 +86,7 @@ const UserSchema: Schema = new Schema({
         traderAddress: { type: String, index: true },
         strategy: { type: String, default: 'PERCENTAGE' },
         copySize: { type: Number, default: 10.0 },
-        enabled: { type: Boolean, default: true },
+        enabled: { type: Boolean, default: false },
         reverseCopy: { type: Boolean, default: false },
         orderType: { type: String, enum: ['MARKET', 'LIMIT'], default: 'MARKET' },
         slippageBuy: { type: Number, default: 0.05 },

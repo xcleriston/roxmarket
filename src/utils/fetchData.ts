@@ -6,22 +6,14 @@ import { ENV } from '../config/env.js';
 import { retry } from './retry.js';
 import Logger from './logger.js';
 
-// Connection pooling to reduce handshake latency
+import { SocksProxyAgent } from 'socks-proxy-agent';
+
+// Connection pooling to reduce handshake latency (matching roxmarket's low-latency approach)
 const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 50 });
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
-
-// BUG FIX: import condicional — socks-proxy-agent só é carregado se USE_PROXY=true
-// Isso evita crash no boot em produção onde o pacote pode não estar presente
-let socksAgent: any = null;
-if (process.env.USE_PROXY === 'true') {
-    try {
-        const { SocksProxyAgent } = await import('socks-proxy-agent');
-        socksAgent = new SocksProxyAgent('socks5h://127.0.0.1:40000');
-        console.log('🛡️ [NETWORK] SOCKS5 Proxy ativado');
-    } catch (e) {
-        console.warn('[NETWORK] USE_PROXY=true mas socks-proxy-agent não encontrado. Proxy desativado.');
-    }
-}
+const socksAgent = process.env.USE_PROXY === 'true' 
+    ? new SocksProxyAgent('socks5h://127.0.0.1:40000') 
+    : null;
 
 const cache = new Map<string, { data: any, timestamp: number }>();
 const CACHE_TTL = 10000; // 10 seconds (for metadata only)
