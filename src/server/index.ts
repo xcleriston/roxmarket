@@ -3204,39 +3204,63 @@ app.get('/api/user/stats', authenticateToken, async (req: AuthRequest, res) => {
         const user = (req as any).fullUser;
         const eoa = user.wallet?.address;
         if (!eoa) return res.json({ balance: 0, exposure: 0 });
-
+        
         const proxyInfo = await findProxyWallet(user);
         const proxy = proxyInfo?.address || null;
         
-        // 1. Fetch internal Polymarket (CLOB) balance - ESSENTIAL for SaaS
+        let totalBalance = 0;
         let clobBalance = 0;
-        try {
-            const clobClient = await getClobClientForUser(user);
-            if (clobClient) {
-                clobBalance = await getMyBalance(clobClient);
+        let balEoa = 0;
+        let balProxy = 0;
+
+        // BUG FIX: Prioridade correta - se tem proxy, buscar saldo on-chain da proxy
+        // Se não tem proxy, buscar saldo CLOB da EOA
+        if (proxy) {
+            // Has proxy wallet - fetch on-chain balance from proxy
+            balProxy = await getMyBalance(proxy);
+            balEoa = await getMyBalance(eoa);
+            totalBalance = balProxy + balEoa;
+            
+            // Also try CLOB as complement
+            try {
+                const clobClient = await getClobClientForUser(user);
+                if (clobClient) {
+                    clobBalance = await getMyBalance(clobClient);
+                    // Add CLOB balance if it's additional funds
+                    if (clobBalance > 0) {
+                        totalBalance += clobBalance;
+                    }
+                }
+            } catch (err) {
+                console.error(`[STATS] CLOB fetch failed:`, err);
             }
-        } catch (err) {
-            console.error(`[STATS] CLOB fetch failed:`, err);
+        } else {
+            // No proxy - use CLOB balance (internal Polymarket balance)
+            try {
+                const clobClient = await getClobClientForUser(user);
+                if (clobClient) {
+                    clobBalance = await getMyBalance(clobClient);
+                    totalBalance = clobBalance;
+                }
+            } catch (err) {
+                console.error(`[STATS] CLOB fetch failed:`, err);
+            }
+            
+            // Fallback to on-chain EOA balance
+            if (totalBalance === 0) {
+                balEoa = await getMyBalance(eoa);
+                totalBalance = balEoa;
+            }
         }
-
-        // 2. Fetch on-chain (RPC) balance as fallback/complement
-        const [balEoa, balProxy] = await Promise.all([
-            getMyBalance(eoa),
-            proxy ? getMyBalance(proxy) : Promise.resolve(0)
-        ]);
         
-        const userIdentifier = user.username || user.chatId || user._id;
-        // BUG FIX: somar EOA + proxy no fallback; prioridade: CLOB > proxy on-chain > EOA on-chain
-        const onChainBalance = proxy ? (balProxy || 0) + (balEoa || 0) : (balEoa || 0);
-        const totalBalance = clobBalance > 0 ? clobBalance : onChainBalance;
-
         const targetAddr = proxy || eoa;
         const positionsData = await fetchData(`https://data-api.polymarket.com/positions?user=${targetAddr}`);
         const exposure = Array.isArray(positionsData)
             ? positionsData.reduce((sum: number, pos: any) => sum + (pos.currentValue || 0), 0)
             : 0;
 
-        Logger.debug(`[STATS_API] ${userIdentifier}: CLOB=${clobBalance}, EOA=${balEoa}, Proxy=${balProxy} -> Total=${totalBalance}`);
+        const userIdentifier = user.username || user.chatId || user._id;
+        Logger.debug(`[STATS_API] ${userIdentifier}: Proxy=${proxy}, CLOB=${clobBalance}, EOA=${balEoa}, ProxyOnChain=${balProxy} -> Total=${totalBalance}`);
         res.json({ 
             balance: parseFloat(totalBalance.toFixed(4)), 
             exposure: parseFloat(exposure.toFixed(2)), 
