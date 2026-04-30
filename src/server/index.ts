@@ -154,7 +154,7 @@ app.get('/api/config', authorizeAdmin, async (_req, res) => {
 app.get('/api/trades', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit as string) || 20;
-        const { Activity, getUserActivityModel } = await import('../models/userHistory.js');
+        const { getUserActivityModel } = await import('../models/userHistory.js');
         const User = await import('../models/user.js');
         
         // Get monitored trader address from users
@@ -163,18 +163,12 @@ app.get('/api/trades', async (req, res) => {
         
         let allTrades: any[] = [];
         
-        // Fetch trades from trader-specific models
+        // Fetch trades from trader-specific models only
         for (const traderAddress of traderAddresses) {
             const UserActivity = getUserActivityModel(traderAddress as string);
             const trades = await UserActivity.find().lean();
             allTrades = allTrades.concat(trades);
         }
-        
-        // Also fetch from global Activity model but filter by traderAddress
-        const globalTrades = await Activity.find({ 
-            traderAddress: { $in: traderAddresses } 
-        }).lean();
-        allTrades = allTrades.concat(globalTrades);
         
         // Deduplicate by transactionHash
         const seenHashes = new Set();
