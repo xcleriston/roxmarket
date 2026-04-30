@@ -29,7 +29,17 @@ interface TradeWithFollowers extends UserActivityInterface {
 const readUnprocessedTrades = async (): Promise<IUserActivity[]> => {
     // BUG FIX: Remover type:'TRADE' - o campo vem da API Polymarket e pode ser undefined.
     // Usar transactionHash como indicador de trade real.
-    return await Activity.find({ bot: false, transactionHash: { $exists: true } }).lean() as unknown as IUserActivity[];
+    // FIX: Apenas buscar trades de traders que têm followers ativos
+    const activeTraders = await User.distinct('config.traderAddress', { 
+        'config.enabled': true,
+        'config.mode': { $in: ['COPY', 'MIRROR_100'] }
+    });
+    
+    return await Activity.find({ 
+        bot: false, 
+        transactionHash: { $exists: true },
+        traderAddress: { $in: activeTraders }
+    }).lean() as unknown as IUserActivity[];
 };
 
 export const processDetectedTrade = async (trade: any, traderAddressParam?: string) => {
