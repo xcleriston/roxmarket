@@ -1,22 +1,18 @@
-import { ENV } from '../config/env.js';
-import express, { Request, Response } from 'express';
+import express from 'express';
 import { ethers } from 'ethers';
 import swaggerUi from 'swagger-ui-express';
 import { setupNewUser } from './setup.js';
 import cookieParser from 'cookie-parser';
-import { authenticateToken, authorizeAdmin, login, signup, AuthRequest } from './auth.js';
+import { authenticateToken, authorizeAdmin, login, signup } from './auth.js';
 import bcrypt from 'bcryptjs';
 import Logger from '../utils/logger.js';
-import telegram from '../utils/telegram.js';
 import User from '../models/user.js';
 import getMyBalance from '../utils/getMyBalance.js';
 import fetchData from '../utils/fetchData.js';
 import { getClobClientForUser, findProxyWallet } from '../utils/createClobClient.js';
-
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
-
 // --- Security Headers (Fix for Production Outage) ---
 app.use((req, res, next) => {
     res.removeHeader("Content-Security-Policy");
@@ -24,9 +20,7 @@ app.use((req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     next();
 });
-
 let botStartTime = Date.now();
-
 // --- Swagger API Docs ---
 const swaggerDoc = {
     openapi: '3.0.0',
@@ -39,20 +33,16 @@ const swaggerDoc = {
     },
 };
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDoc));
-
 // --- Admin Bootstrap ---
 const bootstrapAdmin = async () => {
     const adminUser = process.env.ADMIN_USER || 'admin';
     const adminPass = process.env.ADMIN_PASSWORD || 'hacker123';
     const adminEmail = process.env.ADMIN_EMAIL || 'admin@polyhacker.com';
-
     try {
-        let user = await User.findOne({ 
-            $or: [{ username: adminUser }, { email: adminEmail }] 
+        let user = await User.findOne({
+            $or: [{ username: adminUser }, { email: adminEmail }]
         });
-
         const hashedPassword = await bcrypt.hash(adminPass, 10);
-
         if (!user) {
             console.log(`🚀 [BOOTSTRAP] Criando Administrador: ${adminUser}`);
             user = new User({
@@ -63,17 +53,18 @@ const bootstrapAdmin = async () => {
                 step: 'ready'
             });
             await user.save();
-        } else {
+        }
+        else {
             console.log(`⚡ [BOOTSTRAP] Validando permissões de administrador: ${adminUser}`);
             user.role = 'admin';
             user.password = hashedPassword; // Forçar sincronia com env
             await user.save();
         }
-    } catch (error) {
+    }
+    catch (error) {
         console.error('❌ [BOOTSTRAP] Erro crítico:', error);
     }
 };
-
 // --- API Auth (Public) ---
 app.post('/api/auth/login', login);
 app.post('/api/auth/signup', signup);
@@ -81,37 +72,33 @@ app.post('/api/auth/logout', (_req, res) => {
     res.clearCookie('auth_token');
     res.json({ success: true });
 });
-
 app.get('/api/health', (_req, res) => {
-    res.json({ 
-        status: 'ok', 
+    res.json({
+        status: 'ok',
         uptime: Math.floor((Date.now() - botStartTime) / 1000),
         v: '2.5.0-RBAC-FIX-V3',
         ts: new Date().toISOString()
     });
 });
-
 // --- Protect all other /api routes ---
 app.use('/api', authenticateToken);
-
 // Middleware to populate fullUser for API routes
-app.use('/api', async (req: any, res, next) => {
+app.use('/api', async (req, res, next) => {
     if (req.user?.id) {
         try {
             req.fullUser = await User.findById(req.user.id);
-        } catch (error) {
+        }
+        catch (error) {
             console.error('Error fetching fullUser:', error);
         }
     }
     next();
 });
-
-app.get('/api/status', async (req: AuthRequest, res) => {
+app.get('/api/status', async (req, res) => {
     try {
         const mongoose = (await import('mongoose')).default;
         const totalUsers = await User.countDocuments();
         const activeUsers = await User.countDocuments({ 'config.enabled': true });
-        
         res.json({
             running: true,
             dbConnected: mongoose.connection.readyState === 1,
@@ -122,15 +109,14 @@ app.get('/api/status', async (req: AuthRequest, res) => {
             activeUsers,
             previewMode: process.env.PREVIEW_MODE === 'true'
         });
-    } catch (error) {
+    }
+    catch (error) {
         res.status(500).json({ error: 'Failed to fetch metrics' });
     }
 });
-
 app.get('/api/config', authorizeAdmin, async (_req, res) => {
     // Return summary of first few users for dashboard overview
     const users = await User.find().limit(5).lean();
-    
     const config = {
         global: {
             previewMode: process.env.PREVIEW_MODE === 'true',
@@ -147,82 +133,73 @@ app.get('/api/config', authorizeAdmin, async (_req, res) => {
             step: u.step
         }))
     };
-
     res.json(config);
 });
-
-app.get('/api/trades', async (req: AuthRequest, res) => {
+app.get('/api/trades', async (req, res) => {
     try {
-        const limit = parseInt(req.query.limit as string) || 20;
+        const limit = parseInt(req.query.limit) || 20;
         const { getUserActivityModel } = await import('../models/userHistory.js');
         const User = await import('../models/user.js');
-        
         // Logic for filtering:
         // 1. If explicit traderAddress query param exists, use it.
         // 2. If not, and we have a logged-in user who is NOT an admin, use THEIR trader.
         // 3. Otherwise (Admin or no specific trader), fetch from all monitored traders.
-        let traderAddresses: string[] = [];
-        const requestedTrader = req.query.traderAddress as string;
-        
+        let traderAddresses = [];
+        const requestedTrader = req.query.traderAddress;
         if (requestedTrader) {
             traderAddresses = [requestedTrader.toLowerCase()];
-        } else if (req.fullUser && req.fullUser.role !== 'admin' && req.fullUser.config?.traderAddress) {
-            traderAddresses = [req.fullUser.config.traderAddress.toLowerCase()];
-        } else {
-            const users = await User.default.find({ 'config.traderAddress': { $exists: true, $ne: '' } });
-            traderAddresses = Array.from(new Set(users.map((u: any) => u.config.traderAddress!.toLowerCase())));
         }
-        
+        else if (req.fullUser && req.fullUser.role !== 'admin' && req.fullUser.config?.traderAddress) {
+            traderAddresses = [req.fullUser.config.traderAddress.toLowerCase()];
+        }
+        else {
+            const users = await User.default.find({ 'config.traderAddress': { $exists: true, $ne: '' } });
+            traderAddresses = Array.from(new Set(users.map((u) => u.config.traderAddress.toLowerCase())));
+        }
         console.log('[DEBUG] Filtering trades for:', traderAddresses);
-        
-        let allTrades: any[] = [];
+        let allTrades = [];
         for (const traderAddress of traderAddresses) {
-            const UserActivity = getUserActivityModel(traderAddress as string);
+            const UserActivity = getUserActivityModel(traderAddress);
             // Limit each trader fetch to improve performance
             const tradesResult = await UserActivity.find().sort({ timestamp: -1 }).limit(limit);
             allTrades = allTrades.concat(tradesResult);
         }
-        
         // Deduplicate and sort
         const seenHashes = new Set();
         const uniqueTrades = allTrades.filter(trade => {
             const hash = trade.transactionHash || trade.txHash;
-            if (!hash) return false;
-            if (seenHashes.has(hash)) return false;
+            if (!hash)
+                return false;
+            if (seenHashes.has(hash))
+                return false;
             seenHashes.add(hash);
             return true;
         });
-        
         const sortedTrades = uniqueTrades
             .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
             .slice(0, limit);
-
-        const trades = sortedTrades.map((trade: any) => ({
+        const trades = sortedTrades.map((trade) => ({
             ...trade,
             // Adicionar campo displayTrader para facilitar no frontend
-            displayTrader: trade.pseudonym || trade.name || (trade.traderAddress ? `${trade.traderAddress.slice(0,6)}...${trade.traderAddress.slice(-4)}` : 'Desconhecido'),
+            displayTrader: trade.pseudonym || trade.name || (trade.traderAddress ? `${trade.traderAddress.slice(0, 6)}...${trade.traderAddress.slice(-4)}` : 'Desconhecido'),
             isCopied: trade.bot === true || (trade.processedBy && trade.processedBy.length > 0)
         }));
-
         res.json(trades);
-    } catch (error) {
+    }
+    catch (error) {
         console.error('Error fetching trades:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
-
 // TEMPORARY: Cleanup endpoint to remove trades not from monitored traders
 app.post('/api/cleanup-trades', authorizeAdmin, async (_req, res) => {
     try {
         const { Activity } = await import('../models/userHistory.js');
         const User = await import('../models/user.js');
-        
         // Get monitored trader addresses
         const users = await User.default.find({ 'config.traderAddress': { $exists: true, $ne: '' } });
-        const traderAddresses = Array.from(new Set(users.map((u: any) => u.config.traderAddress!.toLowerCase())));
-        
+        const traderAddresses = Array.from(new Set(users.map((u) => u.config.traderAddress.toLowerCase())));
         console.log('[CLEANUP] Monitored trader addresses:', traderAddresses);
-        
         // Find trades NOT from monitored traders
         const tradesToDelete = await Activity.find({
             $or: [
@@ -231,9 +208,7 @@ app.post('/api/cleanup-trades', authorizeAdmin, async (_req, res) => {
                 { traderAddress: '' }
             ]
         });
-        
         console.log(`[CLEANUP] Found ${tradesToDelete.length} trades to delete`);
-        
         // Delete them
         const result = await Activity.deleteMany({
             $or: [
@@ -242,135 +217,133 @@ app.post('/api/cleanup-trades', authorizeAdmin, async (_req, res) => {
                 { traderAddress: '' }
             ]
         });
-        
         console.log(`[CLEANUP] Deleted ${result.deletedCount} trades`);
-        
         res.json({
             success: true,
             monitoredTraders: traderAddresses,
             foundTrades: tradesToDelete.length,
             deletedCount: result.deletedCount,
-            deletedTrades: tradesToDelete.map((t: any) => ({
+            deletedTrades: tradesToDelete.map((t) => ({
                 transactionHash: t.transactionHash,
                 traderAddress: t.traderAddress,
                 title: t.title,
                 timestamp: t.timestamp
             }))
         });
-    } catch (error) {
+    }
+    catch (error) {
         console.error('[CLEANUP] Error:', error);
         res.status(500).json({ error: 'Cleanup failed' });
     }
 });
-
 app.get('/api/users', authorizeAdmin, async (_req, res) => {
     try {
         const users = await User.find().lean();
         res.json(users);
-    } catch (error) {
+    }
+    catch (error) {
         res.status(500).json({ error: 'Failed to fetch users' });
     }
 });
-
 app.get('/api/users/:id', authorizeAdmin, async (req, res) => {
     try {
         const id = req.params.id;
-        const user = id.length === 24 
+        const user = id.length === 24
             ? await User.findById(id).lean()
             : await User.findOne({ chatId: id }).lean();
-            
-        if (!user) return res.status(404).json({ error: 'User not found' });
+        if (!user)
+            return res.status(404).json({ error: 'User not found' });
         res.json(user);
-    } catch (error) {
+    }
+    catch (error) {
         res.status(500).json({ error: 'Failed to fetch user' });
     }
 });
-
-app.post('/api/users/:id/config', authenticateToken, authorizeAdmin, async (req: AuthRequest, res) => {
+app.post('/api/users/:id/config', authenticateToken, authorizeAdmin, async (req, res) => {
     try {
         const id = req.params.id;
         const { config, step, username, email, password } = req.body;
-        const update: any = {};
-        if (config) update.config = config;
-        if (step) update.step = step;
-        if (username !== undefined) update.username = username;
-        if (email !== undefined) update.email = email;
+        const update = {};
+        if (config)
+            update.config = config;
+        if (step)
+            update.step = step;
+        if (username !== undefined)
+            update.username = username;
+        if (email !== undefined)
+            update.email = email;
         if (password && password.trim() !== '') {
             update.password = await bcrypt.hash(password, 10);
         }
-
-        const user = id.length === 24 
+        const user = id.length === 24
             ? await User.findByIdAndUpdate(id, update, { new: true })
             : await User.findOneAndUpdate({ chatId: id }, update, { new: true });
-        
-        if (!user) return res.status(404).json({ error: 'User not found' });
+        if (!user)
+            return res.status(404).json({ error: 'User not found' });
         res.json({ success: true, user });
-    } catch (error) {
+    }
+    catch (error) {
         res.status(500).json({ error: 'Failed to update user' });
     }
 });
-
-app.post('/api/users/:id/reset', authenticateToken, authorizeAdmin, async (req: AuthRequest, res) => {
+app.post('/api/users/:id/reset', authenticateToken, authorizeAdmin, async (req, res) => {
     try {
         const id = req.params.id;
-        const update = { 
-            $set: { 
+        const update = {
+            $set: {
                 step: 'welcome',
                 wallet: undefined,
                 'config.traderAddress': '',
                 'config.enabled': false
-            } 
+            }
         };
         const user = id.length === 24
             ? await User.findByIdAndUpdate(id, update, { new: true })
             : await User.findOneAndUpdate({ chatId: id }, update, { new: true });
-            
         res.json({ success: true, message: 'User reset successfully', user });
-    } catch (error) {
+    }
+    catch (error) {
         res.status(500).json({ error: 'Failed to reset user' });
     }
 });
-
-app.delete('/api/users/:id', authenticateToken, authorizeAdmin, async (req: AuthRequest, res) => {
+app.delete('/api/users/:id', authenticateToken, authorizeAdmin, async (req, res) => {
     try {
         const id = req.params.id;
         if (id.length === 24) {
             await User.findByIdAndDelete(id);
-        } else {
+        }
+        else {
             await User.deleteOne({ chatId: id });
         }
         res.json({ success: true, message: 'User deleted successfully' });
-    } catch (error) {
+    }
+    catch (error) {
         res.status(500).json({ error: 'Failed to delete user' });
     }
 });
-
-app.post('/api/push/subscribe', authenticateToken, async (req: AuthRequest, res) => {
+app.post('/api/push/subscribe', authenticateToken, async (req, res) => {
     try {
         const { subscription } = req.body;
-        await User.updateOne(
-            { _id: req.user?.id },
-            { $set: { pushSubscription: JSON.stringify(subscription) } }
-        );
+        await User.updateOne({ _id: req.user?.id }, { $set: { pushSubscription: JSON.stringify(subscription) } });
         res.json({ success: true, message: 'Push subscription saved' });
-    } catch (error) {
+    }
+    catch (error) {
         res.status(500).json({ error: 'Failed to save subscription' });
     }
 });
-
 // --- Setup Endpoints (Legacy/Single) ---
 app.post('/api/setup', async (req, res) => {
     try {
         const result = await setupNewUser(req.body);
         res.json(result);
-    } catch (error) {
+    }
+    catch (error) {
         res.status(500).json({
             success: false,
             error: error instanceof Error ? error.message : 'Setup failed'
         });
     }
 });
-
 app.get('/api/setup/wallet', async (req, res) => {
     try {
         const { ethers } = await import('ethers');
@@ -379,14 +352,14 @@ app.get('/api/setup/wallet', async (req, res) => {
             address: wallet.address,
             privateKey: wallet.privateKey
         });
-    } catch (error) {
+    }
+    catch (error) {
         res.status(500).json({
             success: false,
             error: 'Failed to create wallet'
         });
     }
 });
-
 // --- Advanced Configuration ---
 app.get('/api/config/advanced', (_req, res) => {
     const advancedConfig = {
@@ -410,11 +383,9 @@ app.get('/api/config/advanced', (_req, res) => {
     };
     res.json(advancedConfig);
 });
-
 app.post('/api/config/advanced', async (req, res) => {
     try {
         const config = req.body;
-        
         // Validate and update environment variables
         const updates = {
             'COPY_STRATEGY': config.copyStrategy,
@@ -435,42 +406,38 @@ app.post('/api/config/advanced', async (req, res) => {
             'RPC_URL': config.rpcUrl,
             'USDC_CONTRACT_ADDRESS': config.usdcContract
         };
-
         // Update .env file
         const fs = await import('fs');
         const path = await import('path');
         const envPath = path.join(process.cwd(), '.env');
-        
         let envContent = '';
         if (fs.existsSync(envPath)) {
             envContent = fs.readFileSync(envPath, 'utf-8');
         }
-
         // Update or add each configuration
         Object.entries(updates).forEach(([key, value]) => {
             const regex = new RegExp(`^${key}=.*$`, 'm');
             if (regex.test(envContent)) {
                 envContent = envContent.replace(regex, `${key}='${value}'`);
-            } else {
+            }
+            else {
                 envContent += `\n${key}='${value}'`;
             }
         });
-
         fs.writeFileSync(envPath, envContent);
-        
         res.json({
             success: true,
             message: 'Configuration updated successfully',
             config: updates
         });
-    } catch (error) {
+    }
+    catch (error) {
         res.status(500).json({
             success: false,
             error: error instanceof Error ? error.message : 'Failed to update configuration'
         });
     }
 });
-
 app.post('/api/config/reset', async (_req, res) => {
     try {
         const defaults = {
@@ -492,41 +459,37 @@ app.post('/api/config/reset', async (_req, res) => {
             'RPC_URL': 'https://poly.api.pocket.network',
             'USDC_CONTRACT_ADDRESS': '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'
         };
-
         const fs = await import('fs');
         const path = await import('path');
         const envPath = path.join(process.cwd(), '.env');
-        
         let envContent = '';
         if (fs.existsSync(envPath)) {
             envContent = fs.readFileSync(envPath, 'utf-8');
         }
-
         // Reset all to defaults
         Object.entries(defaults).forEach(([key, value]) => {
             const regex = new RegExp(`^${key}=.*$`, 'm');
             if (regex.test(envContent)) {
                 envContent = envContent.replace(regex, `${key}='${value}'`);
-            } else {
+            }
+            else {
                 envContent += `\n${key}='${value}'`;
             }
         });
-
         fs.writeFileSync(envPath, envContent);
-        
         res.json({
             success: true,
             message: 'Configuration reset to defaults',
             config: defaults
         });
-    } catch (error) {
+    }
+    catch (error) {
         res.status(500).json({
             success: false,
             error: error instanceof Error ? error.message : 'Failed to reset configuration'
         });
     }
 });
-
 app.get('/setup', (_req, res) => {
     const setupHtml = `<!DOCTYPE html>
 <html lang="en">
@@ -690,7 +653,6 @@ async function completeSetup() {
 </html>`;
     res.type('html').send(setupHtml);
 });
-
 // --- Web UI ---
 const html = `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -1012,7 +974,6 @@ refresh();
 setInterval(refresh, 5000);
 </script>
 </body></html>`;
-
 const authStyles = `
 :root {
   --bg: #0b0e14; --sidebar: #11151c; --card: #161b22; --border: #21262d;
@@ -1071,7 +1032,6 @@ input:focus { border-color: var(--accent); }
 .footer { margin-top: 25px; text-align: center; font-size: 0.85rem; color: var(--text-dim); }
 .footer a { color: var(--accent); text-decoration: none; font-weight: 600; }
 `;
-
 const loginHtml = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -1114,7 +1074,6 @@ const loginHtml = `<!DOCTYPE html>
     };
   </script>
 </body> </html>`;
-
 const signupHtml = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -1162,7 +1121,6 @@ const signupHtml = `<!DOCTYPE html>
     };
   </script>
 </body> </html>`;
-
 const adminDashboardHtml = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -1785,17 +1743,16 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
     setInterval(refresh, 5000);
   </script>
 </body> </html>`;
-
-app.get('/login', (req: Request, res: Response) => {
-    if (req.cookies.auth_token) return res.redirect('/');
+app.get('/login', (req, res) => {
+    if (req.cookies.auth_token)
+        return res.redirect('/');
     res.type('html').send(loginHtml);
 });
-
-app.get('/signup', (req: Request, res: Response) => {
-    if (req.cookies.auth_token) return res.redirect('/');
+app.get('/signup', (req, res) => {
+    if (req.cookies.auth_token)
+        return res.redirect('/');
     res.type('html').send(signupHtml);
 });
-
 const userDashboardHtml = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -2932,17 +2889,15 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
     loadUser();
   </script>
 </body> </html>`;
-
 // Enrichen AuthRequest with full User data for all /api/user/ routes
-app.use('/api/user/', async (req: any, _res, next) => {
+app.use('/api/user/', async (req, _res, next) => {
     if (req.user?.id) {
         req.fullUser = await User.findById(req.user.id).lean();
     }
     next();
 });
-
-app.get('/api/user/me', authenticateToken, async (req: AuthRequest, res) => {
-    const user = (req as any).fullUser;
+app.get('/api/user/me', authenticateToken, async (req, res) => {
+    const user = req.fullUser;
     res.json(user ? {
         id: user._id,
         chatId: user.chatId,
@@ -2953,20 +2908,18 @@ app.get('/api/user/me', authenticateToken, async (req: AuthRequest, res) => {
         step: user.step
     } : { error: 'Not logged in' });
 });
-
 // Get monitored trader info explicitly
-app.get('/api/user/trader', authenticateToken, async (req: AuthRequest, res) => {
-    const user = (req as any).fullUser;
-    if (!user) return res.status(401).json({ error: 'Not logged in' });
-    
+app.get('/api/user/trader', authenticateToken, async (req, res) => {
+    const user = req.fullUser;
+    if (!user)
+        return res.status(401).json({ error: 'Not logged in' });
     const traderAddress = user.config?.traderAddress;
     if (!traderAddress) {
-        return res.json({ 
+        return res.json({
             monitored: false,
             message: 'No trader configured'
         });
     }
-    
     res.json({
         monitored: true,
         traderAddress: traderAddress.toLowerCase(),
@@ -2976,50 +2929,50 @@ app.get('/api/user/trader', authenticateToken, async (req: AuthRequest, res) => 
         enabled: user.config?.enabled || false
     });
 });
-
-app.post('/api/user/generate-wallet', authenticateToken, async (req: AuthRequest, res) => {
+app.post('/api/user/generate-wallet', authenticateToken, async (req, res) => {
     try {
         const user = await User.findById(req.user?.id);
-        if (!user) return res.status(404).json({ error: 'User not found' });
-        
+        if (!user)
+            return res.status(404).json({ error: 'User not found' });
         if (user.config?.enabled) {
             return res.status(400).json({ error: 'Desative o robô no dashboard antes de alterar a carteira' });
         }
-
         const newWallet = ethers.Wallet.createRandom();
         user.wallet = {
             address: newWallet.address,
             privateKey: newWallet.privateKey
         };
         // Only set to setup if not already ready (to allow seamless swaps)
-        if (user.step !== 'ready') user.step = 'setup';
+        if (user.step !== 'ready')
+            user.step = 'setup';
         await user.save();
         console.log(`[WALLET] Generated new wallet for ${user.username || user.chatId}: ${newWallet.address}`);
         res.json({ success: true, address: newWallet.address, privateKey: newWallet.privateKey });
-    } catch (e) {
+    }
+    catch (e) {
         console.error('[WALLET] Generation error:', e);
         res.status(500).json({ error: 'Failed to generate wallet' });
     }
 });
-
 // Preview endpoint: derives wallet info from PK without saving
-app.post('/api/user/validate-wallet-preview', authenticateToken, async (req: AuthRequest, res) => {
+app.post('/api/user/validate-wallet-preview', authenticateToken, async (req, res) => {
     try {
         let { privateKey, proxyAddress } = req.body;
-        if (!privateKey) return res.status(400).json({ error: 'Private key required' });
+        if (!privateKey)
+            return res.status(400).json({ error: 'Private key required' });
         privateKey = privateKey.trim();
-        if (!privateKey.startsWith('0x')) privateKey = '0x' + privateKey;
-        if (privateKey.length !== 66) return res.status(400).json({ error: 'Chave privada inválida (deve ter 64 hex chars)' });
-
-        if (proxyAddress) proxyAddress = proxyAddress.trim();
-        if (proxyAddress && !proxyAddress.startsWith('0x')) proxyAddress = '0x' + proxyAddress;
-
+        if (!privateKey.startsWith('0x'))
+            privateKey = '0x' + privateKey;
+        if (privateKey.length !== 66)
+            return res.status(400).json({ error: 'Chave privada inválida (deve ter 64 hex chars)' });
+        if (proxyAddress)
+            proxyAddress = proxyAddress.trim();
+        if (proxyAddress && !proxyAddress.startsWith('0x'))
+            proxyAddress = '0x' + proxyAddress;
         const wallet = new ethers.Wallet(privateKey);
         const eoaAddress = wallet.address;
-
         let detectedProxy = proxyAddress || null;
         let walletType = proxyAddress ? 'MetaMask (proxy manual)' : 'EOA';
-
         // Try to detect proxy wallet from Polymarket public-profile if not provided
         if (!detectedProxy) {
             try {
@@ -3028,23 +2981,24 @@ app.post('/api/user/validate-wallet-preview', authenticateToken, async (req: Aut
                     detectedProxy = profile.proxyWallet;
                     walletType = 'MetaMask (proxy wallet)';
                 }
-            } catch (_) { /* ignore */ }
+            }
+            catch (_) { /* ignore */ }
         }
-
         // Fetch on-chain pUSD balance of proxy (or EOA)
         const balanceTarget = detectedProxy || eoaAddress;
         let onchainBalance = 0;
         try {
             onchainBalance = await getMyBalance(balanceTarget);
-        } catch (_) { /* ignore */ }
-
+        }
+        catch (_) { /* ignore */ }
         // Count open positions
         let openPositions = 0;
         try {
             const positions = await fetchData(`https://data-api.polymarket.com/positions?user=${balanceTarget}`);
-            if (Array.isArray(positions)) openPositions = positions.filter((p: any) => p.size > 0).length;
-        } catch (_) { /* ignore */ }
-
+            if (Array.isArray(positions))
+                openPositions = positions.filter((p) => p.size > 0).length;
+        }
+        catch (_) { /* ignore */ }
         res.json({
             address: eoaAddress,
             proxyWallet: detectedProxy,
@@ -3052,30 +3006,29 @@ app.post('/api/user/validate-wallet-preview', authenticateToken, async (req: Aut
             onchainBalance,
             openPositions
         });
-    } catch (e) {
+    }
+    catch (e) {
         res.status(400).json({ error: 'Chave Privada Inválida ou Malformada' });
     }
 });
-
-app.post('/api/user/import-wallet', authenticateToken, async (req: AuthRequest, res) => {
+app.post('/api/user/import-wallet', authenticateToken, async (req, res) => {
     try {
         let { privateKey, proxyAddress } = req.body;
-        if (!privateKey) return res.status(400).json({ error: 'Private key required' });
-        
+        if (!privateKey)
+            return res.status(400).json({ error: 'Private key required' });
         // Cleanup key and ensure 0x prefix
         privateKey = privateKey.trim();
-        if (!privateKey.startsWith('0x')) privateKey = '0x' + privateKey;
-        
+        if (!privateKey.startsWith('0x'))
+            privateKey = '0x' + privateKey;
         if (privateKey.length !== 66) {
             return res.status(400).json({ error: 'Chave privada inválida (formato incorreto)' });
         }
-
-        if (proxyAddress) proxyAddress = proxyAddress.trim();
-        if (proxyAddress && !proxyAddress.startsWith('0x')) proxyAddress = '0x' + proxyAddress;
-
+        if (proxyAddress)
+            proxyAddress = proxyAddress.trim();
+        if (proxyAddress && !proxyAddress.startsWith('0x'))
+            proxyAddress = '0x' + proxyAddress;
         const wallet = new ethers.Wallet(privateKey);
         const eoaAddress = wallet.address;
-
         // Auto-detect proxy wallet if not provided
         let detectedProxy = proxyAddress || undefined;
         if (!detectedProxy) {
@@ -3084,118 +3037,129 @@ app.post('/api/user/import-wallet', authenticateToken, async (req: AuthRequest, 
                 if (profile && profile.proxyWallet && profile.proxyWallet.toLowerCase() !== eoaAddress.toLowerCase()) {
                     detectedProxy = profile.proxyWallet;
                 }
-            } catch (_) { /* ignore */ }
+            }
+            catch (_) { /* ignore */ }
         }
-
         const user = await User.findById(req.user?.id);
-        if (!user) return res.status(404).json({ error: 'User not found' });
-        
+        if (!user)
+            return res.status(404).json({ error: 'User not found' });
         if (user.config?.enabled) {
             return res.status(400).json({ error: 'Desative o robô no dashboard antes de importar uma nova carteira' });
         }
-
         user.wallet = {
             address: eoaAddress,
             privateKey: wallet.privateKey,
             ...(detectedProxy ? { proxyAddress: detectedProxy } : {})
         };
         // Keep ready state if swapping wallet
-        if (user.step !== 'ready') user.step = 'setup';
+        if (user.step !== 'ready')
+            user.step = 'setup';
         await user.save();
         console.log(`[WALLET] Imported wallet for ${user.username || user.chatId}: ${eoaAddress} (Proxy: ${detectedProxy || 'None'})`);
         res.json({ success: true, address: eoaAddress, proxyAddress: detectedProxy });
-    } catch (e) {
+    }
+    catch (e) {
         console.error('[WALLET] Import error:', e);
         res.status(400).json({ error: 'Chave Privada Inválida ou Malformada' });
     }
 });
-
-app.post('/api/user/update-config', authenticateToken, async (req: AuthRequest, res) => {
+app.post('/api/user/update-config', authenticateToken, async (req, res) => {
     const user = await User.findById(req.user?.id);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const {
-        traderAddress, enabled, strategy, copySize,
-        reverseCopy, orderType, slippageBuy, slippageSell, tpPercent, slPercent,
-        balanceSl, triggerDelta, hedgeCeiling,
-        minPrice, maxPrice, minTradeSize, maxTradeSize, copyBuy, copySell,
-        maxExposure, buyAtMin, maxPerMarket, maxPerToken, totalSpendLimit,
-        sniperModeSec, lastMinuteModeSec, maxMarketCount, minMarketLiquidity,
-        mode, proxyAddress
-    } = req.body;
-    
-    if (!user.config) user.config = { enabled: false, strategy: 'PERCENTAGE', copySize: 10.0, traderAddress: '' };
-    
-    if (traderAddress !== undefined) user.config.traderAddress = traderAddress;
-    if (enabled !== undefined) user.config.enabled = enabled;
-    if (strategy !== undefined) user.config.strategy = strategy;
-    if (copySize !== undefined) user.config.copySize = copySize;
-    
+    if (!user)
+        return res.status(404).json({ error: 'User not found' });
+    const { traderAddress, enabled, strategy, copySize, reverseCopy, orderType, slippageBuy, slippageSell, tpPercent, slPercent, balanceSl, triggerDelta, hedgeCeiling, minPrice, maxPrice, minTradeSize, maxTradeSize, copyBuy, copySell, maxExposure, buyAtMin, maxPerMarket, maxPerToken, totalSpendLimit, sniperModeSec, lastMinuteModeSec, maxMarketCount, minMarketLiquidity, mode, proxyAddress } = req.body;
+    if (!user.config)
+        user.config = { enabled: false, strategy: 'PERCENTAGE', copySize: 10.0, traderAddress: '' };
+    if (traderAddress !== undefined)
+        user.config.traderAddress = traderAddress;
+    if (enabled !== undefined)
+        user.config.enabled = enabled;
+    if (strategy !== undefined)
+        user.config.strategy = strategy;
+    if (copySize !== undefined)
+        user.config.copySize = copySize;
     // Advanced fields
-    if (reverseCopy !== undefined) user.config.reverseCopy = reverseCopy;
-    if (orderType !== undefined) user.config.orderType = orderType;
-    if (slippageBuy !== undefined) user.config.slippageBuy = slippageBuy;
-    if (slippageSell !== undefined) user.config.slippageSell = slippageSell;
-    if (balanceSl !== undefined) user.config.balanceSl = balanceSl;
-    if (triggerDelta !== undefined) user.config.triggerDelta = triggerDelta;
-    if (hedgeCeiling !== undefined) user.config.hedgeCeiling = hedgeCeiling;
-    if (tpPercent !== undefined) user.config.tpPercent = tpPercent;
-    if (slPercent !== undefined) user.config.slPercent = slPercent;
-    if (minPrice !== undefined) user.config.minPrice = minPrice;
-    if (maxPrice !== undefined) user.config.maxPrice = maxPrice;
-    if (minTradeSize !== undefined) user.config.minTradeSize = minTradeSize;
-    if (maxTradeSize !== undefined) user.config.maxTradeSize = maxTradeSize;
-    if (copyBuy !== undefined) user.config.copyBuy = copyBuy;
-    if (copySell !== undefined) user.config.copySell = copySell;
-    if (maxExposure !== undefined) user.config.maxExposure = maxExposure;
-    if (buyAtMin !== undefined) user.config.buyAtMin = buyAtMin;
-    if (maxPerMarket !== undefined) user.config.maxPerMarket = maxPerMarket;
-    if (maxPerToken !== undefined) user.config.maxPerToken = maxPerToken;
-    if (totalSpendLimit !== undefined) user.config.totalSpendLimit = totalSpendLimit;
-    if (sniperModeSec !== undefined) user.config.sniperModeSec = sniperModeSec;
-    if (lastMinuteModeSec !== undefined) user.config.lastMinuteModeSec = lastMinuteModeSec;
-    if (maxMarketCount !== undefined) user.config.maxMarketCount = maxMarketCount;
-    if (minMarketLiquidity !== undefined) user.config.minMarketLiquidity = minMarketLiquidity;
-    if (mode !== undefined) user.config.mode = mode;
-
+    if (reverseCopy !== undefined)
+        user.config.reverseCopy = reverseCopy;
+    if (orderType !== undefined)
+        user.config.orderType = orderType;
+    if (slippageBuy !== undefined)
+        user.config.slippageBuy = slippageBuy;
+    if (slippageSell !== undefined)
+        user.config.slippageSell = slippageSell;
+    if (balanceSl !== undefined)
+        user.config.balanceSl = balanceSl;
+    if (triggerDelta !== undefined)
+        user.config.triggerDelta = triggerDelta;
+    if (hedgeCeiling !== undefined)
+        user.config.hedgeCeiling = hedgeCeiling;
+    if (tpPercent !== undefined)
+        user.config.tpPercent = tpPercent;
+    if (slPercent !== undefined)
+        user.config.slPercent = slPercent;
+    if (minPrice !== undefined)
+        user.config.minPrice = minPrice;
+    if (maxPrice !== undefined)
+        user.config.maxPrice = maxPrice;
+    if (minTradeSize !== undefined)
+        user.config.minTradeSize = minTradeSize;
+    if (maxTradeSize !== undefined)
+        user.config.maxTradeSize = maxTradeSize;
+    if (copyBuy !== undefined)
+        user.config.copyBuy = copyBuy;
+    if (copySell !== undefined)
+        user.config.copySell = copySell;
+    if (maxExposure !== undefined)
+        user.config.maxExposure = maxExposure;
+    if (buyAtMin !== undefined)
+        user.config.buyAtMin = buyAtMin;
+    if (maxPerMarket !== undefined)
+        user.config.maxPerMarket = maxPerMarket;
+    if (maxPerToken !== undefined)
+        user.config.maxPerToken = maxPerToken;
+    if (totalSpendLimit !== undefined)
+        user.config.totalSpendLimit = totalSpendLimit;
+    if (sniperModeSec !== undefined)
+        user.config.sniperModeSec = sniperModeSec;
+    if (lastMinuteModeSec !== undefined)
+        user.config.lastMinuteModeSec = lastMinuteModeSec;
+    if (maxMarketCount !== undefined)
+        user.config.maxMarketCount = maxMarketCount;
+    if (minMarketLiquidity !== undefined)
+        user.config.minMarketLiquidity = minMarketLiquidity;
+    if (mode !== undefined)
+        user.config.mode = mode;
     // Wallet settings
     if (proxyAddress !== undefined && user.wallet) {
         user.wallet.proxyAddress = proxyAddress;
     }
-    
     if (req.body.finalize === true) {
         user.step = 'ready';
     }
     await user.save();
     res.json({ success: true });
 });
-
-app.get('/api/user/positions', authenticateToken, async (req: AuthRequest, res) => {
+app.get('/api/user/positions', authenticateToken, async (req, res) => {
     try {
-        const user = (req as any).fullUser;
+        const user = req.fullUser;
         if (!user || !user.wallet || !user.wallet.address) {
             return res.status(400).json({ error: 'Carteira não configurada' });
         }
-
         // BUG FIX: usar proxy wallet quando disponível — EOA não tem posições no Polymarket
         const proxyInfo = await findProxyWallet(user);
         const targetAddr = proxyInfo?.address || user.wallet.address;
-
         const positionsData = await fetchData(`https://data-api.polymarket.com/positions?user=${targetAddr}`);
         if (!Array.isArray(positionsData)) {
             return res.json([]);
         }
-
         // Filter valid open positions and calculate live P&L
         const activePositions = positionsData.filter(p => p.size > 0 && p.currentValue > 0).map(pos => {
             const entryPrice = pos.avgPrice || 0;
             const curPrice = pos.currentValue / pos.size;
             let pnlPercent = 0;
-            
             if (entryPrice > 0) {
                 pnlPercent = ((curPrice - entryPrice) / entryPrice) * 100;
             }
-
             return {
                 asset: pos.asset,
                 title: pos.title,
@@ -3205,92 +3169,85 @@ app.get('/api/user/positions', authenticateToken, async (req: AuthRequest, res) 
                 avgPrice: entryPrice,
                 curPrice: curPrice,
                 pnlPercent: pnlPercent,
-                assetName: pos.outcome || 'Token', 
+                assetName: pos.outcome || 'Token',
             };
         });
-
         // Ensure descending order by value
         activePositions.sort((a, b) => b.currentValue - a.currentValue);
-
         res.json(activePositions);
-    } catch (e) {
+    }
+    catch (e) {
         console.error('Error fetching positions:', e);
         res.status(500).json({ error: 'Erro ao buscar posições' });
     }
 });
-
-app.get('/api/user/trades', authenticateToken, async (req: AuthRequest, res) => {
+app.get('/api/user/trades', authenticateToken, async (req, res) => {
     try {
         const { Activity } = await import('../models/userHistory.js');
-        const user = (req as any).fullUser;
+        const user = req.fullUser;
         const userId = req.user?.id?.toString();
         const traderAddress = user?.config?.traderAddress?.toLowerCase();
-
         // BUG FIX: Remover filtro type:'TRADE' — o campo vem da API Polymarket e pode ser undefined
         // ou ter valores como 'BUY'/'SELL'. Filtrar por transactionHash existente garante que são trades reais.
         const query = traderAddress
             ? { $or: [{ traderAddress }, { processedBy: userId }], transactionHash: { $exists: true } }
             : { processedBy: userId, transactionHash: { $exists: true } };
-
         const tradesData = await Activity.find(query).sort({ timestamp: -1 }).limit(50).lean();
-
         // Enrich with current market price for P&L calculation
-        const enriched = await Promise.all((tradesData as any[]).map(async (t: any) => {
-            let curPrice: number | null = null;
-            let pnlPercent: number | null = null;
+        const enriched = await Promise.all(tradesData.map(async (t) => {
+            let curPrice = null;
+            let pnlPercent = null;
             let pnlLabel = '';
-
             try {
                 if (t.asset) {
                     // BUG FIX: endpoint correto é /markets?condition_id=, não /markets/{conditionId}
                     const mktRes = await fetchData(`https://clob.polymarket.com/markets?condition_id=${t.conditionId}`);
                     const marketData = Array.isArray(mktRes) ? mktRes[0] : mktRes;
-                    const token = marketData?.tokens?.find((tk: any) => tk.token_id === t.asset);
+                    const token = marketData?.tokens?.find((tk) => tk.token_id === t.asset);
                     if (token) {
                         curPrice = parseFloat(token.price);
                         if (t.price && curPrice !== null) {
                             const entryPrice = parseFloat(t.price);
                             if (t.side === 'BUY') {
                                 pnlPercent = ((curPrice - entryPrice) / entryPrice) * 100;
-                            } else {
+                            }
+                            else {
                                 pnlPercent = ((entryPrice - curPrice) / entryPrice) * 100;
                             }
                             pnlLabel = (pnlPercent >= 0 ? '+' : '') + pnlPercent.toFixed(1) + '%';
                         }
                     }
                 }
-            } catch (_) { /* best-effort */ }
-
+            }
+            catch (_) { /* best-effort */ }
             // Determine this user's execution status
             const userStatus = userId && t.followerStatuses?.[userId];
-            let executionStatus: string;
+            let executionStatus;
             let executionDetails = '';
-
             if (userStatus) {
                 executionStatus = userStatus.status;
                 executionDetails = userStatus.details || '';
-            } else if (t.processedBy?.includes(userId)) {
+            }
+            else if (t.processedBy?.includes(userId)) {
                 executionStatus = 'SUCESSO';
-            } else {
+            }
+            else {
                 // Was detected but not attempted for this user yet or not their trader
                 executionStatus = t.traderAddress === traderAddress ? 'DETECTADO' : 'OUTRO';
             }
-
             // Extract user's own execution data
-            const myEntryAmount: number | null = userStatus?.myEntryAmount || null;
-            const myEntryPrice: number | null = userStatus?.myEntryPrice || null;
-
+            const myEntryAmount = userStatus?.myEntryAmount || null;
+            const myEntryPrice = userStatus?.myEntryPrice || null;
             // Calculate user's real P&L in USD
-            let myPnlUSD: number | null = null;
+            let myPnlUSD = null;
             let myPnlLabel = '';
-            let myCurrentValue: number | null = null;
+            let myCurrentValue = null;
             if (myEntryAmount !== null && myEntryPrice !== null && curPrice !== null) {
                 const myTokens = myEntryAmount / myEntryPrice;
                 myCurrentValue = myTokens * curPrice;
                 myPnlUSD = myCurrentValue - myEntryAmount;
                 myPnlLabel = (myPnlUSD >= 0 ? '+$' : '-$') + Math.abs(myPnlUSD).toFixed(2);
             }
-
             return {
                 _id: t._id,
                 timestamp: t.timestamp,
@@ -3315,27 +3272,25 @@ app.get('/api/user/trades', authenticateToken, async (req: AuthRequest, res) => 
                 isChainDetected: t.isChainDetected || false,
                 pseudonym: t.pseudonym,
                 name: t.name,
-                displayTrader: t.pseudonym || t.name || (t.traderAddress ? `${t.traderAddress.slice(0,6)}...${t.traderAddress.slice(-4)}` : '---'),
+                displayTrader: t.pseudonym || t.name || (t.traderAddress ? `${t.traderAddress.slice(0, 6)}...${t.traderAddress.slice(-4)}` : '---'),
                 profileImage: t.profileImage
             };
         }));
-
         res.json(enriched);
-    } catch (e) {
+    }
+    catch (e) {
         console.error('[TRADES]', e);
         res.status(500).json({ error: 'Failed to fetch trades' });
     }
 });
-
-app.get('/api/user/stats', authenticateToken, async (req: AuthRequest, res) => {
+app.get('/api/user/stats', authenticateToken, async (req, res) => {
     try {
-        const user = (req as any).fullUser;
+        const user = req.fullUser;
         const eoa = user.wallet?.address;
-        if (!eoa) return res.json({ balance: 0, exposure: 0 });
-
+        if (!eoa)
+            return res.json({ balance: 0, exposure: 0 });
         const proxyInfo = await findProxyWallet(user);
         const proxy = proxyInfo?.address || null;
-        
         // 1. Fetch internal Polymarket (CLOB) balance - ESSENTIAL for SaaS
         let clobBalance = 0;
         try {
@@ -3343,51 +3298,47 @@ app.get('/api/user/stats', authenticateToken, async (req: AuthRequest, res) => {
             if (clobClient) {
                 clobBalance = await getMyBalance(clobClient);
             }
-        } catch (err) {
+        }
+        catch (err) {
             console.error(`[STATS] CLOB fetch failed:`, err);
         }
-
         // 2. Fetch on-chain (RPC) balance as fallback/complement
         const [balEoa, balProxy] = await Promise.all([
             getMyBalance(eoa),
             proxy ? getMyBalance(proxy) : Promise.resolve(0)
         ]);
-        
         const userIdentifier = user.username || user.chatId || user._id;
         // BUG FIX: somar EOA + proxy no fallback; prioridade: CLOB > proxy on-chain > EOA on-chain
         const onChainBalance = proxy ? (balProxy || 0) + (balEoa || 0) : (balEoa || 0);
         const totalBalance = clobBalance > 0 ? clobBalance : onChainBalance;
-
         const targetAddr = proxy || eoa;
         const positionsData = await fetchData(`https://data-api.polymarket.com/positions?user=${targetAddr}`);
         const exposure = Array.isArray(positionsData)
-            ? positionsData.reduce((sum: number, pos: any) => sum + (pos.currentValue || 0), 0)
+            ? positionsData.reduce((sum, pos) => sum + (pos.currentValue || 0), 0)
             : 0;
-
         Logger.debug(`[STATS_API] ${userIdentifier}: CLOB=${clobBalance}, EOA=${balEoa}, Proxy=${balProxy} -> Total=${totalBalance}`);
-        res.json({ 
-            balance: parseFloat(totalBalance.toFixed(4)), 
-            exposure: parseFloat(exposure.toFixed(2)), 
-            proxy 
+        res.json({
+            balance: parseFloat(totalBalance.toFixed(4)),
+            exposure: parseFloat(exposure.toFixed(2)),
+            proxy
         });
-    } catch (e) {
+    }
+    catch (e) {
         console.error('Stats error:', e);
         res.status(500).json({ error: 'Failed to fetch stats' });
     }
 });
-
-app.get('/', authenticateToken, (req: AuthRequest, res: Response) => {
+app.get('/', authenticateToken, (req, res) => {
     const userRole = req.user?.role || 'follower';
     console.log(`[DASHBOARD] Routing user ${req.user?.username} with role ${userRole}`);
-    
     if (userRole === 'admin') {
         res.type('html').send(adminDashboardHtml);
-    } else {
+    }
+    else {
         res.type('html').send(userDashboardHtml);
     }
 });
-
-export const startServer = async (port: number = parseInt(process.env.PORT || '3000')) => {
+export const startServer = async (port = parseInt(process.env.PORT || '3000')) => {
     await bootstrapAdmin();
     botStartTime = Date.now();
     app.listen(port, '0.0.0.0', () => {
@@ -3396,5 +3347,4 @@ export const startServer = async (port: number = parseInt(process.env.PORT || '3
         console.log(`ðŸ”Œ API:     http://0.0.0.0:${port}/api/health\n`);
     });
 };
-
 export default app;
