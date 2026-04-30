@@ -2963,7 +2963,11 @@ app.post('/api/user/import-wallet', authenticateToken, async (req: AuthRequest, 
         user.wallet = {
             address: eoaAddress,
             privateKey: wallet.privateKey,
-            ...(detectedProxy ? { proxyAddress: detectedProxy } : {})
+            ...(detectedProxy ? { 
+                proxyAddress: detectedProxy,
+                isProxyVerified: true,
+                signatureType: 'POLY_GNOSIS_SAFE'
+            } : {})
         };
         // Keep ready state if swapping wallet
         if (user.step !== 'ready') user.step = 'setup';
