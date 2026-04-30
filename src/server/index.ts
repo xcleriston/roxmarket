@@ -202,6 +202,58 @@ app.get('/api/trades', async (req, res) => {
     }
 });
 
+// TEMPORARY: Cleanup endpoint to remove trades not from monitored traders
+app.post('/api/cleanup-trades', authorizeAdmin, async (_req, res) => {
+    try {
+        const { Activity } = await import('../models/userHistory.js');
+        const User = await import('../models/user.js');
+        
+        // Get monitored trader addresses
+        const users = await User.default.find({ 'config.traderAddress': { $exists: true, $ne: '' } });
+        const traderAddresses = Array.from(new Set(users.map((u: any) => u.config.traderAddress!.toLowerCase())));
+        
+        console.log('[CLEANUP] Monitored trader addresses:', traderAddresses);
+        
+        // Find trades NOT from monitored traders
+        const tradesToDelete = await Activity.find({
+            $or: [
+                { traderAddress: { $nin: traderAddresses } },
+                { traderAddress: { $exists: false } },
+                { traderAddress: '' }
+            ]
+        });
+        
+        console.log(`[CLEANUP] Found ${tradesToDelete.length} trades to delete`);
+        
+        // Delete them
+        const result = await Activity.deleteMany({
+            $or: [
+                { traderAddress: { $nin: traderAddresses } },
+                { traderAddress: { $exists: false } },
+                { traderAddress: '' }
+            ]
+        });
+        
+        console.log(`[CLEANUP] Deleted ${result.deletedCount} trades`);
+        
+        res.json({
+            success: true,
+            monitoredTraders: traderAddresses,
+            foundTrades: tradesToDelete.length,
+            deletedCount: result.deletedCount,
+            deletedTrades: tradesToDelete.map((t: any) => ({
+                transactionHash: t.transactionHash,
+                traderAddress: t.traderAddress,
+                title: t.title,
+                timestamp: t.timestamp
+            }))
+        });
+    } catch (error) {
+        console.error('[CLEANUP] Error:', error);
+        res.status(500).json({ error: 'Cleanup failed' });
+    }
+});
+
 app.get('/api/users', authorizeAdmin, async (_req, res) => {
     try {
         const users = await User.find().lean();
