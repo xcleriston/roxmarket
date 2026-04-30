@@ -12,6 +12,7 @@ export interface AuthRequest extends Request {
         role: string;
         username: string;
     };
+    fullUser?: IUser;
 }
 
 export const generateToken = (user: IUser) => {
