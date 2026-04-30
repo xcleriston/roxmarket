@@ -2923,6 +2923,29 @@ app.get('/api/user/me', authenticateToken, async (req: AuthRequest, res) => {
     } : { error: 'Not logged in' });
 });
 
+// Get monitored trader info explicitly
+app.get('/api/user/trader', authenticateToken, async (req: AuthRequest, res) => {
+    const user = (req as any).fullUser;
+    if (!user) return res.status(401).json({ error: 'Not logged in' });
+    
+    const traderAddress = user.config?.traderAddress;
+    if (!traderAddress) {
+        return res.json({ 
+            monitored: false,
+            message: 'No trader configured'
+        });
+    }
+    
+    res.json({
+        monitored: true,
+        traderAddress: traderAddress.toLowerCase(),
+        traderAddressShort: traderAddress.slice(0, 6) + '...' + traderAddress.slice(-4),
+        strategy: user.config?.strategy || 'PERCENTAGE',
+        copySize: user.config?.copySize || 10.0,
+        enabled: user.config?.enabled || false
+    });
+});
+
 app.post('/api/user/generate-wallet', authenticateToken, async (req: AuthRequest, res) => {
     try {
         const user = await User.findById(req.user?.id);
