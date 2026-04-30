@@ -145,26 +145,20 @@ const postOrder = async (
 
         while (remaining > 0.05 && retry < retryLimit) {
             try {
-                // MIRROR_100: Use exact trade price from trader, no orderBook needed
-                const useTradePrice = isMirror100;
-                const orderPrice = useTradePrice ? parseFloat(trade.price) : null;
-                
-                if (!useTradePrice) {
-                    const orderBook = await clobClient.getOrderBook(trade.asset);
-                    if (!orderBook.asks || orderBook.asks.length === 0) {
-                        await recordStatus(trade._id, followerId, 'PULADO (LIQUIDEZ)', 'Sem ofertas no book');
-                        break;
-                    }
+                const orderBook = await clobClient.getOrderBook(trade.asset);
+                if (!orderBook.asks || orderBook.asks.length === 0) {
+                    await recordStatus(trade._id, followerId, 'PULADO (LIQUIDEZ)', 'Sem ofertas no book');
+                    break;
                 }
 
-                const bestAsk = useTradePrice ? { price: trade.price, size: remaining / trade.price } : (await clobClient.getOrderBook(trade.asset)).asks[0];
+                const bestAsk = orderBook.asks[0];
                 if (!isMirror100 && parseFloat(bestAsk.price) - slippage > trade.price) {
                     await recordStatus(trade._id, followerId, 'PULADO (SLIPPAGE)', 'Slippage muito alto');
                     break;
                 }
 
-                const orderSizeUSD = useTradePrice ? remaining : Math.min(remaining, parseFloat(String(bestAsk.size)) * parseFloat(String(bestAsk.price)));
-                const orderTokens = orderSizeUSD / parseFloat(String(bestAsk.price));
+                const orderSizeUSD = Math.min(remaining, parseFloat(bestAsk.size) * parseFloat(bestAsk.price));
+                const orderTokens = orderSizeUSD / parseFloat(bestAsk.price);
 
                 const isLimit = (trade as any).orderType === 'LIMIT' || orderSizeUSD < 1.0;
                 let resp: any;
@@ -172,7 +166,7 @@ const postOrder = async (
                 if (isLimit) {
                     resp = await clobClient.createAndPostOrder({
                         tokenID: trade.asset,
-                        price: useTradePrice ? (orderPrice || parseFloat(String(bestAsk.price))) : parseFloat(String(bestAsk.price)),
+                        price: config.mode === 'MIRROR_100' ? 0.99 : parseFloat(bestAsk.price),
                         side: Side.BUY,
                         size: orderTokens,
                     }, { tickSize: "0.01" });
@@ -219,21 +213,15 @@ const postOrder = async (
         let retry = 0;
         while (remaining > 0.05 && retry < retryLimit) {
             try {
-                // MIRROR_100: Use exact trade price from trader, no orderBook needed
-                const useTradePrice = isMirror100;
-                const orderPrice = useTradePrice ? parseFloat(trade.price) : null;
-                
-                if (!useTradePrice) {
-                    const orderBook = await clobClient.getOrderBook(trade.asset);
-                    if (!orderBook.bids || orderBook.bids.length === 0) break;
-                }
+                const orderBook = await clobClient.getOrderBook(trade.asset);
+                if (!orderBook.bids || orderBook.bids.length === 0) break;
 
-                const bestBid = useTradePrice ? { price: trade.price, size: remaining } : (await clobClient.getOrderBook(trade.asset)).bids[0];
-                const sellSize = Math.min(remaining, parseFloat(String(bestBid.size)));
+                const bestBid = orderBook.bids[0];
+                const sellSize = Math.min(remaining, parseFloat(bestBid.size));
                 
                 const resp = await clobClient.createAndPostOrder({
                     tokenID: trade.asset,
-                    price: useTradePrice ? (orderPrice || parseFloat(String(bestBid.price))) : parseFloat(String(bestBid.price)),
+                    price: config.mode === 'MIRROR_100' ? 0.01 : parseFloat(bestBid.price),
                     side: Side.SELL,
                     size: sellSize,
                 }, { tickSize: "0.01" });
@@ -242,8 +230,8 @@ const postOrder = async (
                     retry = 0;
                     remaining -= sellSize;
                     await recordStatus(trade._id, followerId, 'SUCESSO', `Vendido tokens`, {
-                        myEntryAmount: sellSize * parseFloat(String(bestBid.price)),
-                        myEntryPrice: parseFloat(String(bestBid.price)),
+                        myEntryAmount: sellSize * parseFloat(bestBid.price),
+                        myEntryPrice: parseFloat(bestBid.price),
                         myExecutedAt: new Date(),
                     });
                 } else {

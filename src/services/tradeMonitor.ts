@@ -36,9 +36,10 @@ const fetchTradeDataForTrader = async (address: string) => {
 
         const cutoffTimestamp = Date.now() / 1000 - TOO_OLD_TIMESTAMP * 3600;
         
-        console.log(`[DEBUG] Fetched ${activities?.length || 0} activities for ${address.slice(0,6)}`);
+        Logger.debug(`[MONITOR-${address.slice(0,6)}] Fetched ${activities?.length || 0} activities from API`);
         if (activities?.length > 0) {
-            console.log(`[DEBUG] Latest activity timestamp: ${activities[0].timestamp} vs cutoff: ${cutoffTimestamp}`);
+            const latestAge = (Date.now() / 1000 - activities[0].timestamp);
+            Logger.debug(`[MONITOR-${address.slice(0,6)}] Latest activity age: ${latestAge.toFixed(1)}s, cutoff: ${(TOO_OLD_TIMESTAMP*3600).toFixed(0)}s`);
         }
         
         // Process activities in reverse (oldest first) to ensure correct sequence
@@ -90,6 +91,8 @@ const fetchTradeDataForTrader = async (address: string) => {
                 name: activity.name,
                 bot: false,
                 botExcutedTime: 0,
+                processedBy: [], // BUG FIX: inicializar como array vazio para rastrear quem processou
+                followerStatuses: {}, // Track detailed execution status per follower
             });
 
             await newTrade.save();

@@ -154,43 +154,14 @@ app.get('/api/config', authorizeAdmin, async (_req, res) => {
 app.get('/api/trades', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit as string) || 20;
-        const { getUserActivityModel } = await import('../models/userHistory.js');
-        const User = await import('../models/user.js');
+        const { Activity } = await import('../models/userHistory.js');
         
-        // Get monitored trader addresses from users
-        const users = await User.default.find({ 'config.traderAddress': { $exists: true, $ne: '' } });
-        const traderAddresses = Array.from(new Set(users.map((u: any) => u.config.traderAddress!.toLowerCase())));
-        
-        console.log('[DEBUG] Monitored trader addresses:', traderAddresses);
-        
-        // Fetch trades from each trader's specific model using the factory
-        // The factory automatically injects traderAddress into the query filter
-        let allTrades: any[] = [];
-        
-        for (const traderAddress of traderAddresses) {
-            const UserActivity = getUserActivityModel(traderAddress as string);
-            const trades = await UserActivity.find();
-            allTrades = allTrades.concat(trades);
-            console.log(`[DEBUG] Fetched ${trades.length} trades for trader ${(traderAddress as string).slice(0, 6)}`);
-        }
-        
-        // Deduplicate by transactionHash (in case same trade appears for multiple traders)
-        const seenHashes = new Set();
-        const uniqueTrades = allTrades.filter(trade => {
-            if (!trade.transactionHash) return false;
-            if (seenHashes.has(trade.transactionHash)) return false;
-            seenHashes.add(trade.transactionHash);
-            return true;
-        });
-        
-        // Sort by timestamp descending and limit
-        const sortedTrades = uniqueTrades
-            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-            .slice(0, limit);
+        const dbTrades = await Activity.find()
+            .sort({ timestamp: -1 })
+            .limit(limit)
+            .lean();
 
-        console.log('[DEBUG] Total unique trades after dedup:', sortedTrades.length);
-
-        const trades = sortedTrades.map((trade: any) => ({
+        const trades = dbTrades.map(trade => ({
             ...trade,
             isCopied: trade.bot === true || (trade.processedBy && trade.processedBy.length > 0)
         }));
@@ -199,58 +170,6 @@ app.get('/api/trades', async (req, res) => {
     } catch (error) {
         console.error('Error fetching trades:', error);
         res.status(500).json({ error: 'Internal Server Error' });
-    }
-});
-
-// TEMPORARY: Cleanup endpoint to remove trades not from monitored traders
-app.post('/api/cleanup-trades', authorizeAdmin, async (_req, res) => {
-    try {
-        const { Activity } = await import('../models/userHistory.js');
-        const User = await import('../models/user.js');
-        
-        // Get monitored trader addresses
-        const users = await User.default.find({ 'config.traderAddress': { $exists: true, $ne: '' } });
-        const traderAddresses = Array.from(new Set(users.map((u: any) => u.config.traderAddress!.toLowerCase())));
-        
-        console.log('[CLEANUP] Monitored trader addresses:', traderAddresses);
-        
-        // Find trades NOT from monitored traders
-        const tradesToDelete = await Activity.find({
-            $or: [
-                { traderAddress: { $nin: traderAddresses } },
-                { traderAddress: { $exists: false } },
-                { traderAddress: '' }
-            ]
-        });
-        
-        console.log(`[CLEANUP] Found ${tradesToDelete.length} trades to delete`);
-        
-        // Delete them
-        const result = await Activity.deleteMany({
-            $or: [
-                { traderAddress: { $nin: traderAddresses } },
-                { traderAddress: { $exists: false } },
-                { traderAddress: '' }
-            ]
-        });
-        
-        console.log(`[CLEANUP] Deleted ${result.deletedCount} trades`);
-        
-        res.json({
-            success: true,
-            monitoredTraders: traderAddresses,
-            foundTrades: tradesToDelete.length,
-            deletedCount: result.deletedCount,
-            deletedTrades: tradesToDelete.map((t: any) => ({
-                transactionHash: t.transactionHash,
-                traderAddress: t.traderAddress,
-                title: t.title,
-                timestamp: t.timestamp
-            }))
-        });
-    } catch (error) {
-        console.error('[CLEANUP] Error:', error);
-        res.status(500).json({ error: 'Cleanup failed' });
     }
 });
 
@@ -2923,29 +2842,6 @@ app.get('/api/user/me', authenticateToken, async (req: AuthRequest, res) => {
     } : { error: 'Not logged in' });
 });
 
-// Get monitored trader info explicitly
-app.get('/api/user/trader', authenticateToken, async (req: AuthRequest, res) => {
-    const user = (req as any).fullUser;
-    if (!user) return res.status(401).json({ error: 'Not logged in' });
-    
-    const traderAddress = user.config?.traderAddress;
-    if (!traderAddress) {
-        return res.json({ 
-            monitored: false,
-            message: 'No trader configured'
-        });
-    }
-    
-    res.json({
-        monitored: true,
-        traderAddress: traderAddress.toLowerCase(),
-        traderAddressShort: traderAddress.slice(0, 6) + '...' + traderAddress.slice(-4),
-        strategy: user.config?.strategy || 'PERCENTAGE',
-        copySize: user.config?.copySize || 10.0,
-        enabled: user.config?.enabled || false
-    });
-});
-
 app.post('/api/user/generate-wallet', authenticateToken, async (req: AuthRequest, res) => {
     try {
         const user = await User.findById(req.user?.id);
@@ -3195,10 +3091,18 @@ app.get('/api/user/trades', authenticateToken, async (req: AuthRequest, res) => 
         const userId = req.user?.id?.toString();
         const traderAddress = user?.config?.traderAddress?.toLowerCase();
 
-        // BUG FIX: Remover filtro type:'TRADE' — o campo vem da API Polymarket e pode ser undefined
-        // ou ter valores como 'BUY'/'SELL'. Filtrar por transactionHash existente garante que são trades reais.
+        // BUG FIX: Mostrar APENAS trades do trader monitorado pelo usuário
+        // ou trades que esse usuário copiou de outros traders (quando estava copiando eles)
         const query = traderAddress
-            ? { $or: [{ traderAddress }, { processedBy: userId }], transactionHash: { $exists: true } }
+            ? { 
+                // Trades do seu trader AND processados por você
+                // OU trades que você copiou (onde seu _id está em processedBy)
+                $or: [
+                    { traderAddress: traderAddress, processedBy: userId },
+                    { processedBy: userId }
+                ],
+                transactionHash: { $exists: true }
+              }
             : { processedBy: userId, transactionHash: { $exists: true } };
 
         const tradesData = await Activity.find(query).sort({ timestamp: -1 }).limit(50).lean();

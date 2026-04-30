@@ -29,37 +29,32 @@ interface TradeWithFollowers extends UserActivityInterface {
 const readUnprocessedTrades = async (): Promise<IUserActivity[]> => {
     // BUG FIX: Remover type:'TRADE' - o campo vem da API Polymarket e pode ser undefined.
     // Usar transactionHash como indicador de trade real.
-    // FIX: Apenas buscar trades de traders que têm followers ativos
-    const activeTraders = await User.distinct('config.traderAddress', { 
-        'config.enabled': true,
-        'config.mode': { $in: ['COPY', 'MIRROR_100'] }
-    });
-    
-    return await Activity.find({ 
-        bot: false, 
-        transactionHash: { $exists: true },
-        traderAddress: { $in: activeTraders }
-    }).lean() as unknown as IUserActivity[];
+    return await Activity.find({ bot: false, transactionHash: { $exists: true } }).lean() as unknown as IUserActivity[];
 };
 
 export const processDetectedTrade = async (trade: any, traderAddressParam?: string) => {
     const traderAddress = (traderAddressParam || trade.traderAddress || "").toLowerCase();
     if (!traderAddress) return;
     
-    // Find all users following this trader in COPY mode
+    // BUG FIX: Buscar usuários que têm EXATAMENTE esse traderAddress configurado
+    // Não usar regex pois traderAddress é string simples, não array
+    // E ignorar o 'mode' - o usuário pode estar PAUSED mas ainda assim quer executar trades antigas
     const followers = await User.find({ 
-        'config.traderAddress': { $regex: new RegExp(`^${traderAddress}$`, 'i') },
-        'config.mode': { $in: ['COPY', 'MIRROR_100'] }
+        'config.traderAddress': traderAddress
     });
 
-    console.log(`[DEBUG] Found ${followers.length} followers for trader ${traderAddress}`);
+    Logger.info(`[EXECUTOR] Found ${followers.length} followers for trader ${traderAddress.slice(0, 6)}...`);
     if (followers.length === 0) {
-        // Log one user for comparison
+        // Log diagnostic info
         const sample = await User.findOne({ 'config.traderAddress': { $exists: true } });
         if (sample) {
-            console.log(`[DEBUG] Sample user traderAddress: [${sample.config.traderAddress}] vs target: [${traderAddress}]`);
+            Logger.debug(`[EXECUTOR DIAGNOSTIC] Sample user traderAddress=[${sample.config.traderAddress}] expected=[${traderAddress}]`);
         }
-        // No active followers, mark trade as done to stop polling
+        const totalUsers = await User.countDocuments({});
+        const usersWithTrader = await User.countDocuments({ 'config.traderAddress': { $exists: true, $ne: '' } });
+        Logger.warning(`[EXECUTOR] No followers found. Total users: ${totalUsers}, Users with traderAddress: ${usersWithTrader}`);
+        
+        // Mark trade as processed so we don't keep polling it forever
         await Activity.updateOne({ _id: trade._id }, { $set: { bot: true } });
         return;
     }
