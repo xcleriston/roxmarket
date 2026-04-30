@@ -2050,9 +2050,14 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
                         <input type="password" id="settings-import-pk" placeholder="0x...">
                     </div>
                     <div class="form-group" style="margin-top: 16px">
-                        <label>Proxy Wallet Address (Gnosis Safe)</label>
-                        <input type="text" id="bot-proxyAddress" placeholder="0x... (Opcional se auto-detectado)">
-                        <small style="color:var(--text-dim); display:block; margin-top:4px">Insira manualmente se o saldo não estiver aparecendo.</small>
+                        <label style="color: var(--warning)">⭐ Carteira de Fundos / Gnosis Safe</label>
+                        <input type="text" id="bot-fundsWallet" placeholder="0x34FA... (onde seu USDC está depositado)">
+                        <small style="color:var(--warning); display:block; margin-top:4px">Este é o endereço principal onde você depositou USDC. Encontre no Polymarket → seu perfil → endereço da carteira. Diferente da chave privada e do proxy de API.</small>
+                    </div>
+                    <div class="form-group" style="margin-top: 16px">
+                        <label>API Proxy Wallet (auto-detectado)</label>
+                        <input type="text" id="bot-proxyAddress" placeholder="0x... (Opcional — detectado automaticamente)">
+                        <small style="color:var(--text-dim); display:block; margin-top:4px">Endereço usado para autenticação CLOB. Não contém saldo.</small>
                     </div>
                     <div style="display: flex; gap: 8px; margin-top: 16px">
                         <button id="btn-import-settings" class="btn btn-outline btn-sm" onclick="importWalletSettings(this)">Atualizar Chave Privada</button>
@@ -2112,9 +2117,8 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
         
         // Sync wallet address globally as soon as data is available
         const walletAddr = document.getElementById('user-wallet-addr');
-        // BUG FIX: mostrar proxy wallet (carteira de fundos) se disponível,
-        // não o EOA (endereço da chave privada, usado só para assinar)
-        const displayAddr = currentUser.wallet?.proxyAddress || currentUser.wallet?.address || '---';
+        // BUG FIX: mostrar fundsWallet (Gnosis Safe c/ USDC) > proxyAddress > EOA
+        const displayAddr = currentUser.wallet?.fundsWallet || currentUser.wallet?.proxyAddress || currentUser.wallet?.address || '---';
         if (walletAddr) walletAddr.textContent = displayAddr;
 
         const hasWallet = currentUser.wallet?.address?.length > 20;
@@ -2396,8 +2400,8 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
         try {
             const c = currentUser.config || {};
             const walletAddr = document.getElementById('user-wallet-addr');
-            // BUG FIX: mostrar proxy wallet (carteira de fundos), não EOA (chave de assinatura)
-            const displayAddr = currentUser.wallet?.proxyAddress || currentUser.wallet?.address || '---';
+            // BUG FIX: mostrar fundsWallet (Gnosis Safe com USDC), não EOA nem API proxy
+            const displayAddr = currentUser.wallet?.fundsWallet || currentUser.wallet?.proxyAddress || currentUser.wallet?.address || '---';
             if (walletAddr) walletAddr.textContent = displayAddr;
             
             const addrDisplay = document.getElementById('trader-addr-display');
@@ -2454,6 +2458,7 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
             setVal('bot-hedgeCeiling', c.hedgeCeiling || 0.95);
             setVal('bot-mode', c.mode || 'COPY');
             setVal('bot-proxyAddress', currentUser.wallet?.proxyAddress || '');
+            setVal('bot-fundsWallet', currentUser.wallet?.fundsWallet || '');
             
             const botBuyAtMin = document.getElementById('bot-buyAtMin');
             if (botBuyAtMin) botBuyAtMin.checked = !!c.buyAtMin;
@@ -2484,8 +2489,10 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
     async function importWalletSettings(btn) {
         const pkInput = document.getElementById('settings-import-pk');
         const proxyInput = document.getElementById('bot-proxyAddress');
+        const fundsInput = document.getElementById('bot-fundsWallet');
         const pk = pkInput.value.trim();
         const proxyAddress = proxyInput ? proxyInput.value.trim() : '';
+        const fundsWallet = fundsInput ? fundsInput.value.trim() : '';
         if (!pk) return showBanner('Chave Privada Necessária', 'warning');
         
         btn.disabled = true; 
@@ -2519,7 +2526,7 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
                 + '<tr><td style="padding:8px 0; color:var(--text-dim)">Open Positions:</td><td style="padding:8px 0 8px 12px; color:var(--text); font-weight:600">' + safePos + '</td></tr>'
                 + '</table>'
                 + '<div style="margin-top:16px; background:rgba(16,185,129,0.1); border-radius:6px; padding:10px 14px; font-size:0.8rem; color:var(--success); display:flex; align-items:center; gap:8px"><span>✅</span> <strong>Validação bem-sucedida.</strong> Confirme para atualizar.</div>'
-                + '<button class="btn" style="margin-top:16px; width:100%" onclick="confirmImportWalletSettings(&quot;' + pk + '&quot;, &quot;' + proxyAddress + '&quot;)">Confirmar Atualização →</button>'
+                + '<button class="btn" style="margin-top:16px; width:100%" onclick="confirmImportWalletSettings(&quot;' + pk + '&quot;, &quot;' + proxyAddress + '&quot;, &quot;' + fundsWallet + '&quot;)">Confirmar Atualização →</button>'
                 + '</div>';
             
             let previewContainer = document.getElementById('settings-import-preview');
@@ -2539,14 +2546,14 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
         }
     }
 
-    async function confirmImportWalletSettings(pk, proxyAddress) {
+    async function confirmImportWalletSettings(pk, proxyAddress, fundsWallet) {
         const btn = document.getElementById('btn-import-settings');
         if (btn) { btn.disabled = true; btn.textContent = 'Importando...'; }
         try {
             const res = await fetch('/api/user/import-wallet', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ privateKey: pk, proxyAddress })
+                body: JSON.stringify({ privateKey: pk, proxyAddress, fundsWallet })
             });
             const data = await res.json();
             if (btn) { btn.disabled = false; btn.textContent = 'Atualizar Chave Privada'; }
@@ -2937,30 +2944,30 @@ app.post('/api/user/validate-wallet-preview', authenticateToken, async (req: Aut
 
 app.post('/api/user/import-wallet', authenticateToken, async (req: AuthRequest, res) => {
     try {
-        let { privateKey, proxyAddress } = req.body;
+        let { privateKey, proxyAddress, fundsWallet } = req.body;
         if (!privateKey) return res.status(400).json({ error: 'Private key required' });
         
-        // Cleanup key and ensure 0x prefix
         privateKey = privateKey.trim();
         if (!privateKey.startsWith('0x')) privateKey = '0x' + privateKey;
         
         if (privateKey.length !== 66) {
-            return res.status(400).json({ error: 'Chave privada inválida (formato incorreto)' });
+            return res.status(400).json({ error: 'Chave privada invalida (formato incorreto)' });
         }
 
-        if (proxyAddress) proxyAddress = proxyAddress.trim();
-        if (proxyAddress && !proxyAddress.startsWith('0x')) proxyAddress = '0x' + proxyAddress;
+        if (proxyAddress) { proxyAddress = proxyAddress.trim(); if (!proxyAddress.startsWith('0x')) proxyAddress = '0x' + proxyAddress; }
+        // BUG FIX: salvar fundsWallet (Gnosis Safe) separado do proxyAddress (API proxy)
+        if (fundsWallet) { fundsWallet = fundsWallet.trim(); if (!fundsWallet.startsWith('0x')) fundsWallet = '0x' + fundsWallet; }
 
         const wallet = new ethers.Wallet(privateKey);
         const eoaAddress = wallet.address;
 
-        // Auto-detect proxy wallet if not provided
-        let detectedProxy = proxyAddress || undefined;
-        if (!detectedProxy) {
+        // Auto-detect API proxy via gamma-api (este e o API proxy, NAO o Gnosis Safe)
+        let detectedApiProxy = proxyAddress || undefined;
+        if (!detectedApiProxy) {
             try {
-                const profile = await fetchData(`https://gamma-api.polymarket.com/public-profile?address=${eoaAddress}`);
+                const profile = await fetchData('https://gamma-api.polymarket.com/public-profile?address=' + eoaAddress);
                 if (profile && profile.proxyWallet && profile.proxyWallet.toLowerCase() !== eoaAddress.toLowerCase()) {
-                    detectedProxy = profile.proxyWallet;
+                    detectedApiProxy = profile.proxyWallet;
                 }
             } catch (_) { /* ignore */ }
         }
@@ -2969,19 +2976,20 @@ app.post('/api/user/import-wallet', authenticateToken, async (req: AuthRequest, 
         if (!user) return res.status(404).json({ error: 'User not found' });
         
         if (user.config?.enabled) {
-            return res.status(400).json({ error: 'Desative o robô no dashboard antes de importar uma nova carteira' });
+            return res.status(400).json({ error: 'Desative o robo no dashboard antes de importar uma nova carteira' });
         }
 
         user.wallet = {
             address: eoaAddress,
             privateKey: wallet.privateKey,
-            ...(detectedProxy ? { proxyAddress: detectedProxy } : {})
+            ...(detectedApiProxy ? { proxyAddress: detectedApiProxy } : {}),
+            // fundsWallet = Gnosis Safe informado pelo usuario (onde o USDC esta de fato)
+            ...(fundsWallet ? { fundsWallet } : {}),
         };
-        // Keep ready state if swapping wallet
         if (user.step !== 'ready') user.step = 'setup';
         await user.save();
-        console.log(`[WALLET] Imported wallet for ${user.username || user.chatId}: ${eoaAddress} (Proxy: ${detectedProxy || 'None'})`);
-        res.json({ success: true, address: eoaAddress, proxyAddress: detectedProxy });
+        console.log('[WALLET] Imported wallet for ' + (user.username || user.chatId) + ': EOA=' + eoaAddress + ' APIProxy=' + (detectedApiProxy || 'None') + ' FundsWallet=' + (fundsWallet || 'None'));
+        res.json({ success: true, address: eoaAddress, proxyAddress: detectedApiProxy, fundsWallet });
     } catch (e) {
         console.error('[WALLET] Import error:', e);
         res.status(400).json({ error: 'Chave Privada Inválida ou Malformada' });
@@ -3233,10 +3241,23 @@ app.get('/api/user/stats', authenticateToken, async (req: AuthRequest, res) => {
         const eoa = user.wallet?.address;
         if (!eoa) return res.json({ balance: 0, exposure: 0 });
 
+        // BUG FIX: Hierarquia de endereços correta:
+        // fundsWallet = Gnosis Safe (onde o USDC está) - informado manualmente
+        // proxyAddress = API Proxy (so para auth CLOB) - NAO tem saldo
+        // eoa = chave privada derivada - pode ter saldo residual
+        const fundsWallet = user.wallet?.fundsWallet || null;
         const proxyInfo = await findProxyWallet(user);
         const proxy = proxyInfo?.address || null;
-        
-        // 1. Fetch internal Polymarket (CLOB) balance - ESSENTIAL for SaaS
+        const balanceAddr = fundsWallet || proxy || eoa;
+
+        // 1. Saldo on-chain (RPC) no endereco correto
+        const [balFunds, balEoa] = await Promise.all([
+            balanceAddr !== eoa ? getMyBalance(balanceAddr) : Promise.resolve(0),
+            getMyBalance(eoa),
+        ]);
+        const onChainBalance = balFunds > 0 ? balFunds : balEoa;
+
+        // 2. Saldo interno CLOB (depositado e aprovado para trading)
         let clobBalance = 0;
         try {
             const clobClient = await getClobClientForUser(user);
@@ -3244,41 +3265,32 @@ app.get('/api/user/stats', authenticateToken, async (req: AuthRequest, res) => {
                 clobBalance = await getMyBalance(clobClient);
             }
         } catch (err) {
-            console.error(`[STATS] CLOB fetch failed:`, err);
+            console.error('[STATS] CLOB fetch failed:', err);
         }
 
-        // 2. Fetch on-chain (RPC) balance as fallback/complement
-        const [balEoa, balProxy] = await Promise.all([
-            getMyBalance(eoa),
-            proxy ? getMyBalance(proxy) : Promise.resolve(0)
-        ]);
-        
-        const userIdentifier = user.username || user.chatId || user._id;
-        // BUG FIX: somar EOA + proxy no fallback; prioridade: CLOB > proxy on-chain > EOA on-chain
-        const onChainBalance = proxy ? (balProxy || 0) + (balEoa || 0) : (balEoa || 0);
         const totalBalance = clobBalance > 0 ? clobBalance : onChainBalance;
-
-        const targetAddr = proxy || eoa;
-        const positionsData = await fetchData(`https://data-api.polymarket.com/positions?user=${targetAddr}`);
+        const positionsAddr = fundsWallet || proxy || eoa;
+        const positionsData = await fetchData('https://data-api.polymarket.com/positions?user=' + positionsAddr);
         const exposure = Array.isArray(positionsData)
             ? positionsData.reduce((sum: number, pos: any) => sum + (pos.currentValue || 0), 0)
             : 0;
 
-        Logger.debug(`[STATS_API] ${userIdentifier}: CLOB=${clobBalance}, EOA=${balEoa}, Proxy=${balProxy} -> Total=${totalBalance}`);
-        res.json({ 
+        const userIdentifier = user.username || user.chatId || user._id;
+        Logger.debug('[STATS_API] ' + userIdentifier + ': CLOB=' + clobBalance + ', OnChain=' + onChainBalance + ' -> Total=' + totalBalance);
+        res.json({
             balance: parseFloat(totalBalance.toFixed(4)),
-            clobBalance: parseFloat(clobBalance.toFixed(4)),    // Saldo interno CLOB (disponível para trades)
-            onChainBalance: parseFloat(onChainBalance.toFixed(4)), // Saldo on-chain (proxy + EOA)
-            exposure: parseFloat(exposure.toFixed(2)), 
-            proxy,
-            eoa
+            clobBalance: parseFloat(clobBalance.toFixed(4)),
+            onChainBalance: parseFloat(onChainBalance.toFixed(4)),
+            exposure: parseFloat(exposure.toFixed(2)),
+            proxy: fundsWallet || proxy,
+            eoa,
+            fundsWallet,
         });
     } catch (e) {
         console.error('Stats error:', e);
         res.status(500).json({ error: 'Failed to fetch stats' });
     }
 });
-
 app.get('/', authenticateToken, (req: AuthRequest, res: Response) => {
     const userRole = req.user?.role || 'follower';
     console.log(`[DASHBOARD] Routing user ${req.user?.username} with role ${userRole}`);

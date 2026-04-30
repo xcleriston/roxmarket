@@ -43,12 +43,26 @@ export const findProxyWallet = async (eoaOrUser: string | any, retries = 3): Pro
     const eoa = typeof eoaOrUser === 'string' ? eoaOrUser : eoaOrUser?.wallet?.address;
     if (!eoa) return null;
 
-    // Use manual proxy if explicitly set in user object (and not just placeholder)
-    if (typeof eoaOrUser === 'object' && eoaOrUser?.wallet?.proxyAddress && eoaOrUser?.wallet?.isProxyVerified) {
-        return { 
-            address: eoaOrUser.wallet.proxyAddress, 
-            type: (eoaOrUser.wallet.signatureType as SignatureTypeV2) || SignatureTypeV2.POLY_GNOSIS_SAFE
-        };
+    // BUG FIX: Prioridade de endereços:
+    // 1. fundsWallet (Gnosis Safe) — onde o USDC está, informado manualmente pelo usuário
+    // 2. proxyAddress salvo no banco (pode ser o API proxy errado — verificar)
+    // 3. Auto-detect via gamma-api (retorna API proxy, não o Gnosis Safe)
+    if (typeof eoaOrUser === 'object') {
+        // Gnosis Safe informado manualmente — usa sempre
+        if (eoaOrUser?.wallet?.fundsWallet) {
+            Logger.info(`[PROXY] Using fundsWallet (Gnosis Safe): ${eoaOrUser.wallet.fundsWallet.slice(0, 10)}...`);
+            return {
+                address: eoaOrUser.wallet.fundsWallet,
+                type: SignatureTypeV2.POLY_GNOSIS_SAFE
+            };
+        }
+        // proxyAddress verificado e salvo (apenas se isProxyVerified=true indica que é o Gnosis Safe)
+        if (eoaOrUser?.wallet?.proxyAddress && eoaOrUser?.wallet?.isProxyVerified) {
+            return { 
+                address: eoaOrUser.wallet.proxyAddress, 
+                type: (eoaOrUser.wallet.signatureType as SignatureTypeV2) || SignatureTypeV2.POLY_GNOSIS_SAFE
+            };
+        }
     }
 
     for (let i = 0; i < retries; i++) {

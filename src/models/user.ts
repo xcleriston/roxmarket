@@ -10,7 +10,8 @@ export interface IUser extends Document {
     wallet?: {
         address: string;
         privateKey: string;
-        proxyAddress?: string;
+        proxyAddress?: string;   // API Proxy (CLOB auth)
+        fundsWallet?: string;    // Gnosis Safe — onde o USDC está depositado
         signatureType?: string;
         isProxyVerified?: boolean;
     };
@@ -65,9 +66,10 @@ const UserSchema: Schema = new Schema({
     role: { type: String, enum: ['admin', 'follower'], default: 'follower' },
     pushSubscription: { type: String },
     wallet: {
-        address: { type: String, index: true },
+        address: { type: String, index: true },        // EOA — assina transações
         privateKey: { type: String },
-        proxyAddress: { type: String, index: true },
+        proxyAddress: { type: String, index: true },   // API Proxy — usado pelo CLOB para autenticação
+        fundsWallet: { type: String, index: true },    // Gnosis Safe — onde o USDC realmente está
         signatureType: { type: String },
         isProxyVerified: { type: Boolean, default: false },
     },
