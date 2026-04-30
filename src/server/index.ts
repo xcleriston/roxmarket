@@ -2621,14 +2621,13 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
             const res = await fetch('/api/user/stats');
             const data = await res.json();
             const setTxt = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
-            setTxt('stat-balance', '$' + Number(data.clobBalance ?? data.balance ?? 0).toFixed(2));
+            setTxt('stat-balance', '$' + Number(data.balance || 0).toFixed(2));
             setTxt('stat-exposure', '$' + Number(data.exposure || 0).toFixed(2));
             
             // Mostrar saldo on-chain como referência secundária
             const onChainEl = document.getElementById('stat-balance-onchain');
-            if (onChainEl) {
-                const onChain = Number(data.onChainBalance || 0).toFixed(2);
-                onChainEl.textContent = 'On-chain (proxy): $' + onChain;
+            if (onChainEl && data.onChainBalance !== undefined) {
+                onChainEl.textContent = 'On-chain: $' + Number(data.onChainBalance || 0).toFixed(2);
             }
             
             if (data.proxy) {
@@ -3241,23 +3240,16 @@ app.get('/api/user/stats', authenticateToken, async (req: AuthRequest, res) => {
         const eoa = user.wallet?.address;
         if (!eoa) return res.json({ balance: 0, exposure: 0 });
 
-        // BUG FIX: Hierarquia de endereços correta:
-        // fundsWallet = Gnosis Safe (onde o USDC está) - informado manualmente
-        // proxyAddress = API Proxy (so para auth CLOB) - NAO tem saldo
-        // eoa = chave privada derivada - pode ter saldo residual
-        const fundsWallet = user.wallet?.fundsWallet || null;
         const proxyInfo = await findProxyWallet(user);
         const proxy = proxyInfo?.address || null;
-        const balanceAddr = fundsWallet || proxy || eoa;
 
-        // 1. Saldo on-chain (RPC) no endereco correto
-        const [balFunds, balEoa] = await Promise.all([
-            balanceAddr !== eoa ? getMyBalance(balanceAddr) : Promise.resolve(0),
-            getMyBalance(eoa),
-        ]);
-        const onChainBalance = balFunds > 0 ? balFunds : balEoa;
+        // fundsWallet = Gnosis Safe informado manualmente (tem USDC on-chain)
+        // proxy = API Proxy detectado via gamma-api (usado pelo CLOB para auth)
+        // eoa = carteira da chave privada
+        const fundsWallet = user.wallet?.fundsWallet || null;
 
-        // 2. Saldo interno CLOB (depositado e aprovado para trading)
+        // 1. Saldo CLOB interno (depositado no Polymarket, disponível para trades)
+        //    O ClobClient usa o API proxy para autenticar — isso é correto
         let clobBalance = 0;
         try {
             const clobClient = await getClobClientForUser(user);
@@ -3268,7 +3260,19 @@ app.get('/api/user/stats', authenticateToken, async (req: AuthRequest, res) => {
             console.error('[STATS] CLOB fetch failed:', err);
         }
 
+        // 2. Saldo on-chain via RPC
+        //    Prioridade: fundsWallet (Gnosis Safe) > proxy > eoa
+        const onChainAddr = fundsWallet || proxy || eoa;
+        const [balOnChain, balEoa] = await Promise.all([
+            onChainAddr !== eoa ? getMyBalance(onChainAddr) : Promise.resolve(0),
+            getMyBalance(eoa),
+        ]);
+        const onChainBalance = balOnChain > 0 ? balOnChain : balEoa;
+
+        // Total mostrado: CLOB tem prioridade (é o saldo que o bot usa)
+        // Se CLOB falhar ou retornar 0, usa on-chain como fallback
         const totalBalance = clobBalance > 0 ? clobBalance : onChainBalance;
+
         const positionsAddr = fundsWallet || proxy || eoa;
         const positionsData = await fetchData('https://data-api.polymarket.com/positions?user=' + positionsAddr);
         const exposure = Array.isArray(positionsData)
@@ -3276,11 +3280,12 @@ app.get('/api/user/stats', authenticateToken, async (req: AuthRequest, res) => {
             : 0;
 
         const userIdentifier = user.username || user.chatId || user._id;
-        Logger.debug('[STATS_API] ' + userIdentifier + ': CLOB=' + clobBalance + ', OnChain=' + onChainBalance + ' -> Total=' + totalBalance);
+        Logger.debug('[STATS_API] ' + userIdentifier + ': CLOB=' + clobBalance + ' OnChain(' + onChainAddr.slice(0,8) + ')=' + onChainBalance + ' -> Total=' + totalBalance);
+        
         res.json({
-            balance: parseFloat(totalBalance.toFixed(4)),
-            clobBalance: parseFloat(clobBalance.toFixed(4)),
-            onChainBalance: parseFloat(onChainBalance.toFixed(4)),
+            balance: parseFloat(totalBalance.toFixed(4)),          // campo principal - sempre correto
+            clobBalance: parseFloat(clobBalance.toFixed(4)),        // saldo interno CLOB
+            onChainBalance: parseFloat(onChainBalance.toFixed(4)), // saldo on-chain
             exposure: parseFloat(exposure.toFixed(2)),
             proxy: fundsWallet || proxy,
             eoa,
