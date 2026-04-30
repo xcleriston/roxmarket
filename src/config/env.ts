@@ -13,38 +13,28 @@ const isValidEthereumAddress = (address: string): boolean => {
  * Validate required environment variables
  */
 const validateRequiredEnv = (): void => {
-    const required = [
-        'USER_ADDRESSES',
-        'PROXY_WALLET',
-        'CLOB_HTTP_URL',
-        'CLOB_WS_URL',
-        'RPC_URL',
-        'WSS_RPC_URL',
-        'USDC_CONTRACT_ADDRESS',
-    ];
+    // No modo SaaS multi-usuario, USER_ADDRESSES/PROXY_WALLET ficam no DB por usuario.
+    // Apenas MONGODB_URI e realmente obrigatoria para o servidor iniciar.
+    const criticalRequired = ['MONGODB_URI'];
 
-    const optional = [
-        'TELEGRAM_BOT_TOKEN',
-        'TELEGRAM_CHAT_ID',
+    const legacySingleUser = [
+        'USER_ADDRESSES', 'PROXY_WALLET', 'CLOB_HTTP_URL',
+        'CLOB_WS_URL', 'RPC_URL', 'WSS_RPC_URL', 'USDC_CONTRACT_ADDRESS',
     ];
 
     const missing: string[] = [];
-    for (const key of required) {
-        if (!process.env[key]) {
-            missing.push(key);
-        }
+    for (const key of criticalRequired) {
+        if (!process.env[key]) missing.push(key);
     }
 
     if (missing.length > 0) {
-        console.error('\n❌ Configuration Error: Missing required environment variables\n');
-        console.error(`Missing variables: ${missing.join(', ')}\n`);
-        console.error('🔧 Quick fix:');
-        console.error('   1. Run the setup wizard: npm run setup');
-        console.error('   2. Or manually create .env file with all required variables\n');
-        console.error('📖 See docs/QUICK_START.md for detailed instructions\n');
-        throw new Error(
-            `Missing required environment variables: ${missing.join(', ')}`
-        );
+        console.error('\n MONGODB_URI nao configurada. Configure nas variaveis de ambiente.\n');
+        throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+    }
+
+    const missingLegacy = legacySingleUser.filter(k => !process.env[k]);
+    if (missingLegacy.length > 0) {
+        console.warn(`[ENV] Variaveis legadas ausentes (normal no modo SaaS): ${missingLegacy.join(', ')}`);
     }
 };
 
@@ -159,9 +149,9 @@ const validateUrls = (): void => {
 
 // Run all validations
 validateRequiredEnv();
-validateAddresses();
-validateNumericConfig();
-validateUrls();
+// validateAddresses(), validateNumericConfig(), validateUrls() removidos do startup global
+// pois no modo SaaS essas vars sao por usuario no banco, nao no ambiente.
+// Cada usuario e validado individualmente ao fazer login/setup.
 
 // Parse USER_ADDRESSES: supports both comma-separated string and JSON array
 const parseUserAddresses = (input: string): string[] => {
@@ -311,8 +301,8 @@ const parseCopyStrategy = (): CopyStrategyConfig => {
 };
 
 export const ENV = {
-    USER_ADDRESSES: parseUserAddresses(process.env.USER_ADDRESSES as string),
-    PROXY_WALLET: process.env.PROXY_WALLET as string,
+    USER_ADDRESSES: process.env.USER_ADDRESSES ? parseUserAddresses(process.env.USER_ADDRESSES) : [],
+    PROXY_WALLET: process.env.PROXY_WALLET || '',
     PRIVATE_KEY: process.env.PRIVATE_KEY as string,
     CLOB_HTTP_URL: process.env.CLOB_HTTP_URL as string,
     CLOB_WS_URL: process.env.CLOB_WS_URL as string,

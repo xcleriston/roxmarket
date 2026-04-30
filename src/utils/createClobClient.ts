@@ -7,9 +7,6 @@ import { ENV } from '../config/env.js';
 import Logger from './logger.js';
 import fetchData from './fetchData.js';
 
-import { SocksProxyAgent } from 'socks-proxy-agent';
-import { fetch as undiciFetch } from 'undici';
-
 const PRIVATE_KEY = ENV.PRIVATE_KEY;
 const CLOB_HTTP_URL = ENV.CLOB_HTTP_URL || 'https://clob.polymarket.com/';
 
@@ -17,19 +14,22 @@ const CLOB_HTTP_URL = ENV.CLOB_HTTP_URL || 'https://clob.polymarket.com/';
 const originalConsoleLog = console.log;
 const originalConsoleError = console.error;
 
-// Setup global fetch proxy for the entire process (affects @polymarket/clob-client-v2)
+// BUG FIX: import condicional — só ativa proxy se USE_PROXY=true
+// Evita crash em produção onde socks-proxy-agent/undici podem não estar no PATH do Node
 if (process.env.USE_PROXY === 'true') {
-    console.log('🛡️ [NETWORK] Enabling SOCKS5 Proxy Tunnel...');
-    const socksAgent = new SocksProxyAgent('socks5h://127.0.0.1:40000');
-    
-    // @ts-ignore
-    global.fetch = (url, options = {}) => {
+    try {
+        const { SocksProxyAgent } = await import('socks-proxy-agent');
+        const { fetch: undiciFetch } = await import('undici');
+        console.log('🛡️ [NETWORK] Enabling SOCKS5 Proxy Tunnel...');
+        const socksAgent = new SocksProxyAgent('socks5h://127.0.0.1:40000');
         // @ts-ignore
-        return undiciFetch(url, {
-            ...options,
-            dispatcher: socksAgent
-        } as any);
-    };
+        global.fetch = (url, options = {}) => {
+            // @ts-ignore
+            return undiciFetch(url, { ...options, dispatcher: socksAgent } as any);
+        };
+    } catch (e) {
+        console.warn('[NETWORK] USE_PROXY=true mas pacotes de proxy não encontrados. Usando fetch padrão.');
+    }
 }
 
 const clobClientCache: Map<string, ClobClient> = new Map();
