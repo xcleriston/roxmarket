@@ -3,6 +3,7 @@ import { ENV } from './config/env.js';
 import createClobClient from './utils/createClobClient.js';
 import tradeExecutor, { stopTradeExecutor } from './services/tradeExecutor.js';
 import tradeMonitor, { stopTradeMonitor } from './services/tradeMonitor.js';
+import websocketMonitor, { stopWebSocketMonitor } from './services/websocketMonitor.js';
 import { startChainMonitor } from './services/chainMonitor.js';
 import { startTpSlMonitor } from './services/tpSlMonitor.js';
 import { startArbitrageMonitor } from './services/arbitrageMonitor.js';
@@ -33,6 +34,7 @@ const gracefulShutdown = async (signal: string) => {
     try {
         // Stop services
         stopTradeMonitor();
+        stopWebSocketMonitor();
         stopTradeExecutor();
 
         // Give services time to finish current operations
@@ -111,8 +113,8 @@ export const main = async () => {
             });
         }
 
-        Logger.info('Starting trade monitor...');
-        tradeMonitor();
+        Logger.info('Starting WebSocket monitor for instant trade detection...');
+        websocketMonitor();
 
         Logger.info('Starting real-time chain monitor...');
         startChainMonitor();

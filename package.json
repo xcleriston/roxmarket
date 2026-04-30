@@ -64,6 +64,7 @@
         "@types/node": "^22.10.10",
         "@types/swagger-ui-express": "^4.1.8",
         "@types/web-push": "^3.6.4",
+        "@types/ws": "^8.18.0",
         "@typescript-eslint/eslint-plugin": "^8.22.0",
         "@typescript-eslint/parser": "^8.22.0",
         "eslint": "^9.19.0",
@@ -97,7 +98,8 @@
         "web-push": "^3.6.7",
         "express-rate-limit": "^7.5.0",
         "socks-proxy-agent": "^8.0.5",
-        "undici": "^5.28.5"
+        "undici": "^5.28.5",
+        "ws": "^8.18.0"
     },
     "engines": {
         "node": ">=18.0.0"
