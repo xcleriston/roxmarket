@@ -1774,8 +1774,9 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
             <div class="card" style="padding: 15px; display: flex; align-items: center; gap: 15px">
                 <div style="background: rgba(59, 130, 246, 0.1); width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.2rem">💰</div>
                 <div>
-                    <div style="font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px">Saldo Disponível</div>
+                    <div style="font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px">Saldo para Trades (CLOB)</div>
                     <div id="stat-balance" style="font-weight: 700; font-size: 1.1rem; color: #fff">$0.00</div>
+                    <div id="stat-balance-onchain" style="font-size: 0.65rem; color: var(--text-dim); margin-top: 2px">On-chain: $0.00</div>
                 </div>
             </div>
             <div class="card" style="padding: 15px; display: flex; align-items: center; gap: 15px">
@@ -2111,7 +2112,10 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
         
         // Sync wallet address globally as soon as data is available
         const walletAddr = document.getElementById('user-wallet-addr');
-        if (walletAddr) walletAddr.textContent = currentUser.wallet?.proxyAddress || currentUser.wallet?.address || '---';
+        // BUG FIX: mostrar proxy wallet (carteira de fundos) se disponível,
+        // não o EOA (endereço da chave privada, usado só para assinar)
+        const displayAddr = currentUser.wallet?.proxyAddress || currentUser.wallet?.address || '---';
+        if (walletAddr) walletAddr.textContent = displayAddr;
 
         const hasWallet = currentUser.wallet?.address?.length > 20;
         const hasTrader = currentUser.config?.traderAddress?.length > 20;
@@ -2392,8 +2396,9 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
         try {
             const c = currentUser.config || {};
             const walletAddr = document.getElementById('user-wallet-addr');
-            // BUG FIX: Show proxy address instead of EOA when proxy exists
-            if (walletAddr) walletAddr.textContent = currentUser.wallet?.proxyAddress || currentUser.wallet?.address || '---';
+            // BUG FIX: mostrar proxy wallet (carteira de fundos), não EOA (chave de assinatura)
+            const displayAddr = currentUser.wallet?.proxyAddress || currentUser.wallet?.address || '---';
+            if (walletAddr) walletAddr.textContent = displayAddr;
             
             const addrDisplay = document.getElementById('trader-addr-display');
             const isArbitrage = c.mode === 'ARBITRAGE';
@@ -2609,8 +2614,15 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
             const res = await fetch('/api/user/stats');
             const data = await res.json();
             const setTxt = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
-            setTxt('stat-balance', '$' + Number(data.balance || 0).toFixed(2));
+            setTxt('stat-balance', '$' + Number(data.clobBalance ?? data.balance ?? 0).toFixed(2));
             setTxt('stat-exposure', '$' + Number(data.exposure || 0).toFixed(2));
+            
+            // Mostrar saldo on-chain como referência secundária
+            const onChainEl = document.getElementById('stat-balance-onchain');
+            if (onChainEl) {
+                const onChain = Number(data.onChainBalance || 0).toFixed(2);
+                onChainEl.textContent = `On-chain (proxy): $${onChain}`;
+            }
             
             if (data.proxy) {
                 const pInput = document.getElementById('bot-proxyAddress');
@@ -2963,11 +2975,7 @@ app.post('/api/user/import-wallet', authenticateToken, async (req: AuthRequest, 
         user.wallet = {
             address: eoaAddress,
             privateKey: wallet.privateKey,
-            ...(detectedProxy ? { 
-                proxyAddress: detectedProxy,
-                isProxyVerified: true,
-                signatureType: 'POLY_GNOSIS_SAFE'
-            } : {})
+            ...(detectedProxy ? { proxyAddress: detectedProxy } : {})
         };
         // Keep ready state if swapping wallet
         if (user.step !== 'ready') user.step = 'setup';
@@ -3119,25 +3127,38 @@ app.get('/api/user/trades', authenticateToken, async (req: AuthRequest, res) => 
             let pnlLabel = '';
 
             try {
-                if (t.asset) {
-                    // BUG FIX: endpoint correto é /markets?condition_id=, não /markets/{conditionId}
+                if (t.asset && t.conditionId) {
+                    // Buscar preço atual do token no CLOB
                     const mktRes = await fetchData(`https://clob.polymarket.com/markets?condition_id=${t.conditionId}`);
                     const marketData = Array.isArray(mktRes) ? mktRes[0] : mktRes;
-                    const token = marketData?.tokens?.find((tk: any) => tk.token_id === t.asset);
-                    if (token) {
-                        curPrice = parseFloat(token.price);
-                        if (t.price && curPrice !== null) {
-                            const entryPrice = parseFloat(t.price);
-                            if (t.side === 'BUY') {
-                                pnlPercent = ((curPrice - entryPrice) / entryPrice) * 100;
-                            } else {
-                                pnlPercent = ((entryPrice - curPrice) / entryPrice) * 100;
+                    
+                    if (marketData) {
+                        // Tentar pelo token_id exato primeiro
+                        const token = marketData?.tokens?.find((tk: any) => tk.token_id === t.asset);
+                        
+                        if (token && token.price !== null && token.price !== undefined) {
+                            curPrice = parseFloat(String(token.price));
+                            
+                            if (t.price && curPrice !== null && !isNaN(curPrice)) {
+                                const entryPrice = parseFloat(String(t.price));
+                                if (entryPrice > 0 && curPrice > 0) {
+                                    if (t.side === 'BUY') {
+                                        pnlPercent = ((curPrice - entryPrice) / entryPrice) * 100;
+                                    } else {
+                                        // SELL: lucro quando o mercado cai
+                                        pnlPercent = ((entryPrice - curPrice) / entryPrice) * 100;
+                                    }
+                                    pnlLabel = (pnlPercent >= 0 ? '+' : '') + pnlPercent.toFixed(1) + '%';
+                                }
                             }
-                            pnlLabel = (pnlPercent >= 0 ? '+' : '') + pnlPercent.toFixed(1) + '%';
+                        } else if (marketData.closed || marketData.resolved) {
+                            // Mercado fechado/resolvido — usar outcome se disponível
+                            curPrice = null;
+                            pnlLabel = 'Mercado encerrado';
                         }
                     }
                 }
-            } catch (_) { /* best-effort */ }
+            } catch (_) { /* best-effort, continua sem P&L */ }
 
             // Determine this user's execution status
             const userStatus = userId && t.followerStatuses?.[userId];
@@ -3150,20 +3171,22 @@ app.get('/api/user/trades', authenticateToken, async (req: AuthRequest, res) => 
             } else if (t.processedBy?.includes(userId)) {
                 executionStatus = 'SUCESSO';
             } else {
-                // Was detected but not attempted for this user yet or not their trader
                 executionStatus = t.traderAddress === traderAddress ? 'DETECTADO' : 'OUTRO';
             }
 
-            // Extract user's own execution data
-            const myEntryAmount: number | null = userStatus?.myEntryAmount || null;
-            const myEntryPrice: number | null = userStatus?.myEntryPrice || null;
+            // Extract user's own execution data from followerStatuses
+            // BUG FIX: myEntryAmount pode ser 0 (válido), usar undefined check não null check
+            const myEntryAmount: number | null = userStatus?.myEntryAmount !== undefined ? userStatus.myEntryAmount : null;
+            const myEntryPrice: number | null = userStatus?.myEntryPrice !== undefined ? userStatus.myEntryPrice : null;
 
             // Calculate user's real P&L in USD
             let myPnlUSD: number | null = null;
             let myPnlLabel = '';
             let myCurrentValue: number | null = null;
-            if (myEntryAmount !== null && myEntryPrice !== null && curPrice !== null) {
+            if (myEntryAmount !== null && myEntryAmount > 0 && myEntryPrice !== null && myEntryPrice > 0 && curPrice !== null) {
+                // Shares comprados = valor pago / preço de entrada
                 const myTokens = myEntryAmount / myEntryPrice;
+                // Valor atual = shares × preço atual
                 myCurrentValue = myTokens * curPrice;
                 myPnlUSD = myCurrentValue - myEntryAmount;
                 myPnlLabel = (myPnlUSD >= 0 ? '+$' : '-$') + Math.abs(myPnlUSD).toFixed(2);
@@ -3209,67 +3232,46 @@ app.get('/api/user/stats', authenticateToken, async (req: AuthRequest, res) => {
         const user = (req as any).fullUser;
         const eoa = user.wallet?.address;
         if (!eoa) return res.json({ balance: 0, exposure: 0 });
-        
+
         const proxyInfo = await findProxyWallet(user);
         const proxy = proxyInfo?.address || null;
         
-        let totalBalance = 0;
+        // 1. Fetch internal Polymarket (CLOB) balance - ESSENTIAL for SaaS
         let clobBalance = 0;
-        let balEoa = 0;
-        let balProxy = 0;
-
-        // BUG FIX: Prioridade correta - se tem proxy, buscar saldo on-chain da proxy
-        // Se não tem proxy, buscar saldo CLOB da EOA
-        if (proxy) {
-            // Has proxy wallet - fetch on-chain balance from proxy
-            balProxy = await getMyBalance(proxy);
-            balEoa = await getMyBalance(eoa);
-            totalBalance = balProxy + balEoa;
-            
-            // Also try CLOB as complement
-            try {
-                const clobClient = await getClobClientForUser(user);
-                if (clobClient) {
-                    clobBalance = await getMyBalance(clobClient);
-                    // Add CLOB balance if it's additional funds
-                    if (clobBalance > 0) {
-                        totalBalance += clobBalance;
-                    }
-                }
-            } catch (err) {
-                console.error(`[STATS] CLOB fetch failed:`, err);
+        try {
+            const clobClient = await getClobClientForUser(user);
+            if (clobClient) {
+                clobBalance = await getMyBalance(clobClient);
             }
-        } else {
-            // No proxy - use CLOB balance (internal Polymarket balance)
-            try {
-                const clobClient = await getClobClientForUser(user);
-                if (clobClient) {
-                    clobBalance = await getMyBalance(clobClient);
-                    totalBalance = clobBalance;
-                }
-            } catch (err) {
-                console.error(`[STATS] CLOB fetch failed:`, err);
-            }
-            
-            // Fallback to on-chain EOA balance
-            if (totalBalance === 0) {
-                balEoa = await getMyBalance(eoa);
-                totalBalance = balEoa;
-            }
+        } catch (err) {
+            console.error(`[STATS] CLOB fetch failed:`, err);
         }
+
+        // 2. Fetch on-chain (RPC) balance as fallback/complement
+        const [balEoa, balProxy] = await Promise.all([
+            getMyBalance(eoa),
+            proxy ? getMyBalance(proxy) : Promise.resolve(0)
+        ]);
         
+        const userIdentifier = user.username || user.chatId || user._id;
+        // BUG FIX: somar EOA + proxy no fallback; prioridade: CLOB > proxy on-chain > EOA on-chain
+        const onChainBalance = proxy ? (balProxy || 0) + (balEoa || 0) : (balEoa || 0);
+        const totalBalance = clobBalance > 0 ? clobBalance : onChainBalance;
+
         const targetAddr = proxy || eoa;
         const positionsData = await fetchData(`https://data-api.polymarket.com/positions?user=${targetAddr}`);
         const exposure = Array.isArray(positionsData)
             ? positionsData.reduce((sum: number, pos: any) => sum + (pos.currentValue || 0), 0)
             : 0;
 
-        const userIdentifier = user.username || user.chatId || user._id;
-        Logger.debug(`[STATS_API] ${userIdentifier}: Proxy=${proxy}, CLOB=${clobBalance}, EOA=${balEoa}, ProxyOnChain=${balProxy} -> Total=${totalBalance}`);
+        Logger.debug(`[STATS_API] ${userIdentifier}: CLOB=${clobBalance}, EOA=${balEoa}, Proxy=${balProxy} -> Total=${totalBalance}`);
         res.json({ 
-            balance: parseFloat(totalBalance.toFixed(4)), 
+            balance: parseFloat(totalBalance.toFixed(4)),
+            clobBalance: parseFloat(clobBalance.toFixed(4)),    // Saldo interno CLOB (disponível para trades)
+            onChainBalance: parseFloat(onChainBalance.toFixed(4)), // Saldo on-chain (proxy + EOA)
             exposure: parseFloat(exposure.toFixed(2)), 
-            proxy 
+            proxy,
+            eoa
         });
     } catch (e) {
         console.error('Stats error:', e);
@@ -3292,7 +3294,7 @@ export const startServer = async (port: number = parseInt(process.env.PORT || '3
     await bootstrapAdmin();
     botStartTime = Date.now();
     app.listen(port, '0.0.0.0', () => {
-        console.log(`\nðŸŒ Web UI:  http://0.0.0.0:${port}`);
+        console.log(`\n🌐 Web UI:  http://0.0.0.0:${port}`);
         console.log(`ðŸ“– Swagger: http://0.0.0.0:${port}/docs`);
         console.log(`ðŸ”Œ API:     http://0.0.0.0:${port}/api/health\n`);
     });

@@ -43,9 +43,8 @@ export const findProxyWallet = async (eoaOrUser: string | any, retries = 3): Pro
     const eoa = typeof eoaOrUser === 'string' ? eoaOrUser : eoaOrUser?.wallet?.address;
     if (!eoa) return null;
 
-    // BUG FIX: Use manual proxy if explicitly set in user object (even without isProxyVerified)
-    // This ensures existing wallets with proxyAddress work correctly
-    if (typeof eoaOrUser === 'object' && eoaOrUser?.wallet?.proxyAddress) {
+    // Use manual proxy if explicitly set in user object (and not just placeholder)
+    if (typeof eoaOrUser === 'object' && eoaOrUser?.wallet?.proxyAddress && eoaOrUser?.wallet?.isProxyVerified) {
         return { 
             address: eoaOrUser.wallet.proxyAddress, 
             type: (eoaOrUser.wallet.signatureType as SignatureTypeV2) || SignatureTypeV2.POLY_GNOSIS_SAFE

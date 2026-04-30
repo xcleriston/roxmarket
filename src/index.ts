@@ -102,31 +102,6 @@ export const main = async () => {
         } catch (err) {
             Logger.error(`[MIGRATION] Failed to migrate ARBITRAGE users: ${err}`);
         }
-
-        // Migration: Fix existing users with proxy wallets but missing verification flags
-        try {
-            const User = (await import('./models/user.js')).default;
-            const proxyMigrationResult = await User.updateMany(
-                {
-                    'wallet.proxyAddress': { $exists: true, $ne: null, $nin: [null, ''] },
-                    $or: [
-                        { 'wallet.isProxyVerified': { $exists: false } },
-                        { 'wallet.isProxyVerified': false }
-                    ]
-                },
-                {
-                    $set: {
-                        'wallet.isProxyVerified': true,
-                        'wallet.signatureType': 'POLY_GNOSIS_SAFE'
-                    }
-                }
-            );
-            if (proxyMigrationResult.modifiedCount > 0) {
-                Logger.info(`[MIGRATION] Fixed ${proxyMigrationResult.modifiedCount} users with proxy wallets (added isProxyVerified and signatureType).`);
-            }
-        } catch (err) {
-            Logger.error(`[MIGRATION] Failed to migrate proxy wallet users: ${err}`);
-        }
         
         // Telegram Bot (non-blocking)
         if (ENV.TELEGRAM_BOT_TOKEN) {
