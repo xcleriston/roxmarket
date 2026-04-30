@@ -891,7 +891,7 @@ async function refresh() {
     const monitoredTrader = currentUser?.config?.traderAddress;
     
     if (monitoredTrader) {
-        document.getElementById('trade-title').textContent = `Atividades Recentes: ${monitoredTrader.slice(0,6)}...${monitoredTrader.slice(-4)}`;
+        document.getElementById('trade-title').textContent = \`Atividades Recentes: \${monitoredTrader.slice(0,6)}...\${monitoredTrader.slice(-4)}\`;
     }
 
     document.getElementById('uptime').textContent = 'Uptime: ' + Math.floor(status.uptime/3600) + 'h ' + Math.floor((status.uptime%3600)/60) + 'm';
