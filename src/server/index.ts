@@ -154,28 +154,43 @@ app.get('/api/config', authorizeAdmin, async (_req, res) => {
 app.get('/api/trades', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit as string) || 20;
-        const { Activity } = await import('../models/userHistory.js');
+        const { getUserActivityModel } = await import('../models/userHistory.js');
         const User = await import('../models/user.js');
         
-        // Get monitored trader address from users
+        // Get monitored trader addresses from users
         const users = await User.default.find({ 'config.traderAddress': { $exists: true, $ne: '' } });
         const traderAddresses = Array.from(new Set(users.map((u: any) => u.config.traderAddress!.toLowerCase())));
         
         console.log('[DEBUG] Monitored trader addresses:', traderAddresses);
         
-        // Fetch from global Activity model with explicit traderAddress filter
-        // Also ensure traderAddress exists and is not empty
-        const dbTrades = await Activity.find({ 
-            traderAddress: { $in: traderAddresses, $exists: true, $ne: '' } 
-        })
-            .sort({ timestamp: -1 })
-            .limit(limit)
-            .lean();
+        // Fetch trades from each trader's specific model using the factory
+        // The factory automatically injects traderAddress into the query filter
+        let allTrades: any[] = [];
+        
+        for (const traderAddress of traderAddresses) {
+            const UserActivity = getUserActivityModel(traderAddress as string);
+            const trades = await UserActivity.find();
+            allTrades = allTrades.concat(trades);
+            console.log(`[DEBUG] Fetched ${trades.length} trades for trader ${(traderAddress as string).slice(0, 6)}`);
+        }
+        
+        // Deduplicate by transactionHash (in case same trade appears for multiple traders)
+        const seenHashes = new Set();
+        const uniqueTrades = allTrades.filter(trade => {
+            if (!trade.transactionHash) return false;
+            if (seenHashes.has(trade.transactionHash)) return false;
+            seenHashes.add(trade.transactionHash);
+            return true;
+        });
+        
+        // Sort by timestamp descending and limit
+        const sortedTrades = uniqueTrades
+            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+            .slice(0, limit);
 
-        console.log('[DEBUG] Fetched trades count:', dbTrades.length);
-        console.log('[DEBUG] Sample trader addresses from fetched trades:', dbTrades.slice(0, 3).map((t: any) => t.traderAddress));
+        console.log('[DEBUG] Total unique trades after dedup:', sortedTrades.length);
 
-        const trades = dbTrades.map((trade: any) => ({
+        const trades = sortedTrades.map((trade: any) => ({
             ...trade,
             isCopied: trade.bot === true || (trade.processedBy && trade.processedBy.length > 0)
         }));
