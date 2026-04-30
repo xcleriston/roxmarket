@@ -1314,7 +1314,7 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
         </div>
       </div>
 
-      <h2>Atividade Recente (Global)</h2>
+      <h2 id="trade-title">Atividade Recente (Global)</h2>
       <div class="card">
         <table>
           <thead>
@@ -1542,8 +1542,12 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
         const [status, users, trades] = await Promise.all([
           fetch('/api/status').then(r => r.json()),
           fetch('/api/users').then(r => r.json()),
-          fetch('/api/trades?limit=20').then(r => r.json())
+          fetch('/api/trades?limit=30').then(r => r.json())
         ]);
+
+        // Logic to update title based on filtered view if applicable
+        const tradeTitle = document.getElementById('trade-title');
+        if (tradeTitle) tradeTitle.textContent = "Atividade Recente Monitorada";
 
         // Stats
         document.getElementById('admin-name').textContent = status.username || 'Admin';
@@ -1566,7 +1570,7 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
         }
 
         // Users Table
-        document.getElementById('user-body').innerHTML = users.map(u => \`
+        document.getElementById('user-body').innerHTML = users.map(u => `
           <tr>
             <td>
               <div style="font-weight: 700; color: #fff">\${u.username || u.chatId}</div>
@@ -1594,19 +1598,19 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
           </tr>
         \`).join('');
 
-        // Trade Tables (Dash and Logs)
+        // Trade Tables (Logs)
         const tradesHtml = trades.map(t => \`
           <tr>
-            <td style="font-size: 0.75rem; color: var(--text-dim)">\${new Date(t.timestamp).toLocaleString()}</td>
-            <td style="font-weight: 500">\${t.chatId || 'System'}</td>
-            <td style="font-size: 0.8rem; max-width: 150px; overflow: hidden; text-overflow: ellipsis">\${t.title || t.slug}</td>
+            <td style="font-size: 0.75rem; color: var(--text-dim">\${new Date(t.timestamp).toLocaleString()}</td>
+            <td style="font-weight: 600">\${t.processedBy?.length > 0 ? '✓ Copiado' : '---'}</td>
+            <td style="color: var(--accent); font-weight: 700">\${t.displayTrader || (t.traderAddress ? t.traderAddress.slice(0,6) : '---')}</td>
             <td><span style="color: \${t.side === 'BUY' ? 'var(--success)' : 'var(--danger)'}">\${t.side}</span></td>
-            <td style="font-weight: 700">$\${(t.usdcSize || 0).toFixed(2)}</td>
-            <td><span style="color: \${t.bot ? 'var(--success)' : 'var(--warning)'}">\${t.bot ? 'EXECUTED' : 'PENDING'}</span></td>
+            <td>$\${(t.usdcSize || 0).toFixed(2)}</td>
+            <td>\${t.bot ? '<span style="color: var(--success)">Executado</span>' : '<span style="color: var(--text-dim)">Observado</span>'}</td>
           </tr>
         \`).join('');
+        document.getElementById('log-trade-body').innerHTML = tradesHtml;
         document.getElementById('dash-trade-body').innerHTML = tradesHtml;
-        document.getElementById('log-trade-body').innerHTML = tradesHtml; // Detailed view could be richer
 
       } catch (e) { console.error('Refresh failed:', e); }
     }
@@ -1912,6 +1916,7 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
                     <thead>
                         <tr>
                             <th>DATA/HORA</th>
+                            <th>TRADER</th>
                             <th>MERCADO</th>
                             <th>LADO</th>
                             <th>VALOR TRADER</th>
@@ -2789,6 +2794,7 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
                 return \`
                 <tr style="border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.2s" onmouseover="this.style.background='rgba(255,255,255,0.02)'" onmouseout="this.style.background='transparent'">
                     <td style="font-size:0.72rem; color:var(--text-dim); white-space:nowrap">\${new Date(t.timestamp).toLocaleString('pt-BR')}</td>
+                    <td style="color:var(--accent); font-weight:700">\${t.displayTrader || '---'}</td>
                     <td>\${marketLink}</td>
                     <td><span style="color:\${t.side==='BUY'?'var(--success)':'var(--danger)'}; font-weight:700">\${t.side==='BUY'?'📈 COMPRA':'📉 VENDA'}</span></td>
                     <td style="font-weight:700; color:#fff">$\${(t.usdcSize||0).toFixed(2)}</td>
@@ -3301,6 +3307,7 @@ app.get('/api/user/trades', authenticateToken, async (req: AuthRequest, res) => 
                 isChainDetected: t.isChainDetected || false,
                 pseudonym: t.pseudonym,
                 name: t.name,
+                displayTrader: t.pseudonym || t.name || (t.traderAddress ? `${t.traderAddress.slice(0,6)}...${t.traderAddress.slice(-4)}` : '---'),
                 profileImage: t.profileImage
             };
         }));
