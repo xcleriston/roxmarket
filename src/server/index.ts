@@ -151,7 +151,7 @@ app.get('/api/config', authorizeAdmin, async (_req, res) => {
     res.json(config);
 });
 
-app.get('/api/trades', async (req, res) => {
+app.get('/api/trades', async (req: AuthRequest, res) => {
     try {
         const limit = parseInt(req.query.limit as string) || 20;
         const { getUserActivityModel } = await import('../models/userHistory.js');
@@ -179,8 +179,8 @@ app.get('/api/trades', async (req, res) => {
         for (const traderAddress of traderAddresses) {
             const UserActivity = getUserActivityModel(traderAddress as string);
             // Limit each trader fetch to improve performance
-            const trades = await UserActivity.find().sort({ timestamp: -1 }).limit(limit);
-            allTrades = allTrades.concat(trades);
+            const tradesResult = await UserActivity.find().sort({ timestamp: -1 }).limit(limit);
+            allTrades = allTrades.concat(tradesResult);
         }
         
         // Deduplicate and sort
@@ -201,15 +201,6 @@ app.get('/api/trades', async (req, res) => {
             ...trade,
             // Adicionar campo displayTrader para facilitar no frontend
             displayTrader: trade.pseudonym || trade.name || `${trade.traderAddress.slice(0,6)}...${trade.traderAddress.slice(-4)}`,
-            isCopied: trade.bot === true || (trade.processedBy && trade.processedBy.length > 0)
-        }));
-
-        res.json(trades);
-
-        console.log('[DEBUG] Total unique trades after dedup:', sortedTrades.length);
-
-        const trades = sortedTrades.map((trade: any) => ({
-            ...trade,
             isCopied: trade.bot === true || (trade.processedBy && trade.processedBy.length > 0)
         }));
 
