@@ -3229,7 +3229,7 @@ app.get('/api/user/trades', authenticateToken, async (req: AuthRequest, res) => 
         // BUG FIX: Remover filtro type:'TRADE' — o campo vem da API Polymarket e pode ser undefined
         // ou ter valores como 'BUY'/'SELL'. Filtrar por transactionHash existente garante que são trades reais.
         const query = traderAddress
-            ? { $or: [{ traderAddress }, { processedBy: userId }], transactionHash: { $exists: true } }
+            ? { traderAddress, transactionHash: { $exists: true } }
             : { processedBy: userId, transactionHash: { $exists: true } };
 
         const tradesData = await Activity.find(query).sort({ timestamp: -1 }).limit(50).lean();
