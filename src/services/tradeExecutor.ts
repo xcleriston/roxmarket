@@ -69,21 +69,19 @@ export const processDetectedTrade = async (trade: any, traderAddressParam?: stri
         Logger.header(`👤 FOLLOWER: ${followerId} copying ${traderAddress.slice(0, 6)}...`);
 
         try {
-            // 1. User Client (For Balance/Positions - MUST be user-authenticated)
-            const clobClientBalance = await getClobClientForUser(follower);
-            
-            // 2. Execution Client (For POSTing orders - MUST be Builder-authenticated for performance)
-            const clobClientExecute = await createClobClient(
-                follower.wallet?.privateKey, 
-                follower.wallet?.proxyAddress, 
-                follower.wallet?.signatureType as any, 
-                true // FORCE BUILDER CREDENTIALS
-            );
+            // BUG FIX: usar getClobClientForUser para AMBOS balance e execução
+            // Isso usa credenciais salvas no banco — sem chamadas repetidas ao /auth/api-key
+            // O cliente de execução é o mesmo (a API key do usuário já tem permissão para postar ordens)
+            const clobClient = await getClobClientForUser(follower);
 
-            if (!clobClientBalance || !clobClientExecute) {
-                Logger.error(`[${followerId}] Could not initialize CLOB clients - skipping trade`);
+            if (!clobClient) {
+                Logger.error(`[${followerId}] Could not initialize CLOB client - skipping trade`);
                 continue;
             }
+
+            // Alias para compatibilidade com o restante do código
+            const clobClientBalance = clobClient;
+            const clobClientExecute = clobClient;
             
             const proxyWallet = follower.wallet?.address;
             if (!proxyWallet) {

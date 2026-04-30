@@ -14,6 +14,13 @@ export interface IUser extends Document {
         fundsWallet?: string;    // Gnosis Safe — onde o USDC está depositado
         signatureType?: string;
         isProxyVerified?: boolean;
+        // Credenciais CLOB persistidas para evitar chamar /auth/api-key repetidamente
+        clobCreds?: {
+            key: string;
+            secret: string;
+            passphrase: string;
+            derivedAt: number; // timestamp
+        };
     };
     config: {
         mode?: 'COPY' | 'ARBITRAGE' | 'MIRROR_100';
@@ -72,6 +79,13 @@ const UserSchema: Schema = new Schema({
         fundsWallet: { type: String, index: true },    // Gnosis Safe — onde o USDC realmente está
         signatureType: { type: String },
         isProxyVerified: { type: Boolean, default: false },
+        // Credenciais CLOB salvas para evitar /auth/api-key repetido (causa bloqueio Cloudflare)
+        clobCreds: {
+            key: { type: String },
+            secret: { type: String },
+            passphrase: { type: String },
+            derivedAt: { type: Number },
+        },
     },
     config: {
         mode: { type: String, enum: ['COPY', 'ARBITRAGE', 'MIRROR_100'], default: 'COPY' },

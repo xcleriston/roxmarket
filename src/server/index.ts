@@ -2941,6 +2941,29 @@ app.post('/api/user/validate-wallet-preview', authenticateToken, async (req: Aut
     }
 });
 
+// Endpoint para derivar/atualizar credenciais CLOB manualmente
+// Útil quando o Cloudflare bloqueou o IP e as creds precisam ser renovadas
+app.post('/api/user/refresh-clob-key', authenticateToken, async (req: AuthRequest, res) => {
+    try {
+        const user = await User.findById(req.user?.id);
+        if (!user?.wallet?.privateKey) return res.status(400).json({ error: 'Carteira não configurada' });
+
+        // Limpar creds salvas e cache em memória para forçar nova derivação
+        await User.updateOne({ _id: user._id }, { $unset: { 'wallet.clobCreds': 1 } });
+        const { clearClobCache } = await import('../utils/createClobClient.js');
+        clearClobCache(user.wallet.address);
+
+        // Rederiva as credenciais
+        const freshUser = await User.findById(req.user?.id).lean();
+        const client = await getClobClientForUser(freshUser);
+        if (!client) return res.status(500).json({ error: 'Falha ao derivar credenciais CLOB. Verifique se sua chave privada está correta.' });
+
+        res.json({ success: true, message: 'Credenciais CLOB atualizadas com sucesso.' });
+    } catch (e: any) {
+        res.status(500).json({ error: e?.message || 'Erro ao atualizar credenciais' });
+    }
+});
+
 app.post('/api/user/import-wallet', authenticateToken, async (req: AuthRequest, res) => {
     try {
         let { privateKey, proxyAddress, fundsWallet } = req.body;

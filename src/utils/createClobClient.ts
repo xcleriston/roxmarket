@@ -32,8 +32,6 @@ if (process.env.USE_PROXY === 'true') {
     }
 }
 
-const clobClientCache: Map<string, ClobClient> = new Map();
-
 export interface ProxyInfo {
     address: string;
     type: SignatureTypeV2;
@@ -96,29 +94,96 @@ export const findProxyWallet = async (eoaOrUser: string | any, retries = 3): Pro
     return null;
 };
 
+// Cache em memória (sobrevive ao ciclo da requisição, não ao restart)
+const clobClientCache: Map<string, ClobClient> = new Map();
+// Controle de tentativas para não spammar o Cloudflare
+const clobFailureCount: Map<string, number> = new Map();
+const CLOB_CREDS_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
+
+// Permite limpar o cache de um usuário específico (ex: após 403 Cloudflare)
+export const clearClobCache = (address: string) => {
+    clobClientCache.delete(address.toLowerCase());
+    clobFailureCount.delete(address.toLowerCase());
+    Logger.info(`[CLOB] Cache cleared for ${address.slice(0,8)}`);
+};
+
 export const getClobClientForUser = async (user: any): Promise<ClobClient | null> => {
     if (!user.wallet?.privateKey) return null;
-    
+
     const cacheKey = user.wallet.address.toLowerCase();
+
+    // 1. Cache em memória — mais rápido, evita qualquer chamada à rede
     if (clobClientCache.has(cacheKey)) return clobClientCache.get(cacheKey)!;
 
-    let proxyInfo: ProxyInfo | null = null;
-    if (user.wallet.proxyAddress && user.wallet.signatureType && user.wallet.isProxyVerified) {
-        proxyInfo = {
-            address: user.wallet.proxyAddress,
-            type: user.wallet.signatureType as SignatureTypeV2
-        };
-    } else {
-        proxyInfo = await findProxyWallet(user);
+    // 2. Verificar se falhou muitas vezes recentemente (evitar spam ao Cloudflare)
+    const failures = clobFailureCount.get(cacheKey) || 0;
+    if (failures >= 3) {
+        // Depois de 3 falhas, aguardar 10min antes de tentar novamente
+        Logger.warning(`[CLOB] Skipping ${cacheKey.slice(0,8)} — too many recent failures (${failures}). Will retry later.`);
+        return null;
     }
-    
+
+    const proxyInfo = user.wallet.proxyAddress && user.wallet.signatureType && user.wallet.isProxyVerified
+        ? { address: user.wallet.proxyAddress, type: user.wallet.signatureType as SignatureTypeV2 }
+        : await findProxyWallet(user);
+
     try {
-        // IMPORTANT: Never use Builder creds for user balance/dashboard info
-        const client = await createClobClient(user.wallet.privateKey, proxyInfo?.address, proxyInfo?.type, false);
+        const account = privateKeyToAccount(
+            (user.wallet.privateKey.startsWith('0x') ? user.wallet.privateKey : `0x${user.wallet.privateKey}`) as `0x${string}`
+        );
+        const walletClient = createWalletClient({ account, chain: polygon, transport: http(ENV.RPC_URL) });
+        const signatureType = proxyInfo?.type ?? SignatureTypeV2.EOA;
+        const host = CLOB_HTTP_URL;
+
+        // 3. BUG FIX: Usar credenciais salvas no banco se ainda válidas (< 7 dias)
+        //    Isso evita chamar /auth/api-key repetidamente, que causa bloqueio Cloudflare
+        const savedCreds = user.wallet?.clobCreds;
+        const credsAge = savedCreds?.derivedAt ? Date.now() - savedCreds.derivedAt : Infinity;
+
+        if (savedCreds?.key && savedCreds?.secret && savedCreds?.passphrase && credsAge < CLOB_CREDS_TTL_MS) {
+            Logger.debug(`[CLOB] Using saved credentials for ${account.address.slice(0,8)} (age: ${Math.round(credsAge/3600000)}h)`);
+            const client = new ClobClient({
+                host, chain: Chain.POLYGON, signer: walletClient,
+                creds: { key: savedCreds.key, secret: savedCreds.secret, passphrase: savedCreds.passphrase },
+                signatureType,
+            });
+            clobClientCache.set(cacheKey, client);
+            clobFailureCount.delete(cacheKey);
+            return client;
+        }
+
+        // 4. Credenciais ausentes ou expiradas — derivar uma vez e salvar no banco
+        Logger.info(`[CLOB] Deriving new API key for ${account.address.slice(0,8)}... (this calls /auth/api-key once)`);
+        const baseClient = new ClobClient({ host, chain: Chain.POLYGON, signer: walletClient, signatureType });
+        const creds = await baseClient.createOrDeriveApiKey();
+
+        // Salvar credenciais no banco para evitar novas chamadas
+        const User = (await import('../models/user.js')).default;
+        await User.updateOne(
+            { _id: user._id },
+            { $set: { 'wallet.clobCreds': { ...creds, derivedAt: Date.now() } } }
+        );
+        Logger.success(`[CLOB] Credentials saved to DB for ${account.address.slice(0,8)}`);
+
+        const client = new ClobClient({
+            host, chain: Chain.POLYGON, signer: walletClient,
+            creds, signatureType,
+        });
         clobClientCache.set(cacheKey, client);
+        clobFailureCount.delete(cacheKey);
         return client;
-    } catch (err) {
-        Logger.error(`[CLOB] Failed to create client for ${user.wallet.address.slice(0,6)}: ${err}`);
+
+    } catch (err: any) {
+        const count = (clobFailureCount.get(cacheKey) || 0) + 1;
+        clobFailureCount.set(cacheKey, count);
+        Logger.error(`[CLOB] Failed to create client for ${cacheKey.slice(0,8)} (attempt ${count}): ${err?.message || err}`);
+
+        // Se for 403 Cloudflare, limpar creds salvas para forçar nova derivação depois
+        if (err?.message?.includes('403') || err?.status === 403) {
+            Logger.warning(`[CLOB] 403 Cloudflare detected for ${cacheKey.slice(0,8)} — clearing saved creds`);
+            const User = (await import('../models/user.js')).default;
+            await User.updateOne({ _id: user._id }, { $unset: { 'wallet.clobCreds': 1 } });
+        }
         return null;
     }
 };
