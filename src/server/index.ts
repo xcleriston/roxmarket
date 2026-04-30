@@ -2621,7 +2621,7 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
             const onChainEl = document.getElementById('stat-balance-onchain');
             if (onChainEl) {
                 const onChain = Number(data.onChainBalance || 0).toFixed(2);
-                onChainEl.textContent = `On-chain (proxy): $${onChain}`;
+                onChainEl.textContent = 'On-chain (proxy): $' + onChain;
             }
             
             if (data.proxy) {
