@@ -154,25 +154,21 @@ app.get('/api/config', authorizeAdmin, async (_req, res) => {
 app.get('/api/trades', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit as string) || 20;
-        const { Activity, getUserActivityModel } = await import('../models/userHistory.js');
+        const { getUserActivityModel } = await import('../models/userHistory.js');
         const User = await import('../models/user.js');
         
-        // Get all unique trader addresses
+        // Get monitored trader address from users
         const users = await User.default.find({ 'config.traderAddress': { $exists: true, $ne: '' } });
         const traderAddresses = Array.from(new Set(users.map((u: any) => u.config.traderAddress!.toLowerCase())));
         
-        // Fetch trades from all trader-specific models
         let allTrades: any[] = [];
         
+        // Fetch trades from trader-specific models only
         for (const traderAddress of traderAddresses) {
             const UserActivity = getUserActivityModel(traderAddress as string);
             const trades = await UserActivity.find().lean();
             allTrades = allTrades.concat(trades);
         }
-        
-        // Also fetch from global Activity model for backward compatibility
-        const globalTrades = await Activity.find().lean();
-        allTrades = allTrades.concat(globalTrades);
         
         // Deduplicate by transactionHash
         const seenHashes = new Set();
@@ -190,16 +186,7 @@ app.get('/api/trades', async (req, res) => {
 
         const trades = sortedTrades.map(trade => ({
             ...trade,
-            isCopied: trade.bot === true || (trade.processedBy && trade.processedBy.length > 0),
-            // Extract follower execution data for display
-            followerData: trade.followerStatuses ? Object.entries(trade.followerStatuses).map(([followerId, status]: [string, any]) => ({
-                followerId,
-                status: status.status,
-                details: status.details,
-                myEntryAmount: status.myEntryAmount,
-                myEntryPrice: status.myEntryPrice,
-                myExecutedAt: status.myExecutedAt
-            })) : []
+            isCopied: trade.bot === true || (trade.processedBy && trade.processedBy.length > 0)
         }));
 
         res.json(trades);
@@ -778,8 +765,6 @@ input, select { width: 100%; background: var(--bg); border: 1px solid var(--bord
           <th>Lado</th>
           <th>Valor</th>
           <th>Mercado</th>
-          <th>Minha Entrada</th>
-          <th>Meu Lucro</th>
           <th>Status</th>
         </tr>
       </thead>
@@ -888,8 +873,6 @@ async function refresh() {
         <td><span style="color: \${t.side === 'BUY' ? 'var(--success)' : 'var(--danger)'}">\${t.side}</span></td>
         <td>$\${(t.usdcSize || 0).toFixed(2)}</td>
         <td style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">\${t.title || t.slug}</td>
-        <td style="font-family: monospace; font-size: 0.8rem">\${t.followerData?.length > 0 ? '$' + (t.followerData[0]?.myEntryPrice || 0).toFixed(4) : '---'}</td>
-        <td style="font-family: monospace; font-size: 0.8rem">\${t.followerData?.length > 0 ? '$' + (t.followerData[0]?.myEntryAmount || 0).toFixed(2) : '---'}</td>
         <td>\${t.bot ? '<span style="color: var(--success)">✓ Executado</span>' : '<span style="color: var(--text-dim)">Pendente</span>'}</td>
       </tr>
     \`).join('');
