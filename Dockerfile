@@ -6,7 +6,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install all dependencies including dev dependencies for build
-RUN npm ci --ignore-scripts
+RUN npm install --ignore-scripts
 
 # Install @types/node globally
 RUN npm install -g @types/node

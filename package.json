@@ -97,6 +97,9 @@
         "web-push": "^3.6.7",
         "express-rate-limit": "^7.5.0",
         "socks-proxy-agent": "^8.0.5",
-        "undici": "^7.10.0"
+        "undici": "^5.28.5"
+    },
+    "engines": {
+        "node": ">=18.0.0"
     }
 }
