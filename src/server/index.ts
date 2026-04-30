@@ -2111,7 +2111,7 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
         
         // Sync wallet address globally as soon as data is available
         const walletAddr = document.getElementById('user-wallet-addr');
-        if (walletAddr) walletAddr.textContent = currentUser.wallet?.address || '---';
+        if (walletAddr) walletAddr.textContent = currentUser.wallet?.proxyAddress || currentUser.wallet?.address || '---';
 
         const hasWallet = currentUser.wallet?.address?.length > 20;
         const hasTrader = currentUser.config?.traderAddress?.length > 20;
@@ -2392,7 +2392,8 @@ td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 0.85
         try {
             const c = currentUser.config || {};
             const walletAddr = document.getElementById('user-wallet-addr');
-            if (walletAddr) walletAddr.textContent = currentUser.wallet?.address || '---';
+            // BUG FIX: Show proxy address instead of EOA when proxy exists
+            if (walletAddr) walletAddr.textContent = currentUser.wallet?.proxyAddress || currentUser.wallet?.address || '---';
             
             const addrDisplay = document.getElementById('trader-addr-display');
             const isArbitrage = c.mode === 'ARBITRAGE';
