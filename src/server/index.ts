@@ -154,14 +154,41 @@ app.get('/api/config', authorizeAdmin, async (_req, res) => {
 app.get('/api/trades', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit as string) || 20;
-        const { Activity } = await import('../models/userHistory.js');
+        const { Activity, getUserActivityModel } = await import('../models/userHistory.js');
+        const User = await import('../models/user.js');
         
-        const dbTrades = await Activity.find()
-            .sort({ timestamp: -1 })
-            .limit(limit)
-            .lean();
+        // Get all unique trader addresses
+        const users = await User.default.find({ 'config.traderAddress': { $exists: true, $ne: '' } });
+        const traderAddresses = Array.from(new Set(users.map((u: any) => u.config.traderAddress!.toLowerCase())));
+        
+        // Fetch trades from all trader-specific models
+        let allTrades: any[] = [];
+        
+        for (const traderAddress of traderAddresses) {
+            const UserActivity = getUserActivityModel(traderAddress as string);
+            const trades = await UserActivity.find().lean();
+            allTrades = allTrades.concat(trades);
+        }
+        
+        // Also fetch from global Activity model for backward compatibility
+        const globalTrades = await Activity.find().lean();
+        allTrades = allTrades.concat(globalTrades);
+        
+        // Deduplicate by transactionHash
+        const seenHashes = new Set();
+        const uniqueTrades = allTrades.filter(trade => {
+            if (!trade.transactionHash) return false;
+            if (seenHashes.has(trade.transactionHash)) return false;
+            seenHashes.add(trade.transactionHash);
+            return true;
+        });
+        
+        // Sort by timestamp descending and limit
+        const sortedTrades = uniqueTrades
+            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+            .slice(0, limit);
 
-        const trades = dbTrades.map(trade => ({
+        const trades = sortedTrades.map(trade => ({
             ...trade,
             isCopied: trade.bot === true || (trade.processedBy && trade.processedBy.length > 0),
             // Extract follower execution data for display
