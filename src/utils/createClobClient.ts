@@ -101,7 +101,7 @@ export const getClobClientForUser = async (user: any): Promise<ClobClient | null
         saved?.derivedAt && (Date.now() - saved.derivedAt) < SEVEN_DAYS) {
         try {
             const pk = (user.wallet.privateKey.startsWith('0x') 
-                ? user.wallet.privateKey : '0x' + user.wallet.privateKey) as \`0x\${string}\`;
+                ? user.wallet.privateKey : '0x' + user.wallet.privateKey) as (`0x${string}`);
             const account = privateKeyToAccount(pk);
             const walletClient = createWalletClient({ account, chain: polygon, transport: http(ENV.RPC_URL) });
             const signatureType = (user.wallet.signatureType as SignatureTypeV2) || SignatureTypeV2.EOA;
