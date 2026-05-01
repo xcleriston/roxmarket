@@ -7,8 +7,19 @@ import { ENV } from '../config/env.js';
 import Logger from './logger.js';
 import fetchData from './fetchData.js';
 
-import { SocksProxyAgent } from 'socks-proxy-agent';
-import { fetch as undiciFetch } from 'undici';
+// Proxy SOCKS5 carregado condicionalmente — só se USE_PROXY=true
+// Evita ERR_MODULE_NOT_FOUND em produção onde o pacote pode não estar instalado
+if (process.env.USE_PROXY === 'true') {
+    try {
+        const { SocksProxyAgent } = await import('socks-proxy-agent');
+        const { fetch: undiciFetch } = await import('undici');
+        const socksAgent = new SocksProxyAgent('socks5h://127.0.0.1:40000');
+        global.fetch = (url, opts = {}) => undiciFetch(url, { ...opts, dispatcher: socksAgent });
+        Logger.info('[NETWORK] SOCKS5 proxy ativado');
+    } catch (e) {
+        Logger.warning('[NETWORK] USE_PROXY=true mas pacotes de proxy não encontrados: ' + e);
+    }
+}
 
 const PRIVATE_KEY = ENV.PRIVATE_KEY;
 const CLOB_HTTP_URL = ENV.CLOB_HTTP_URL || 'https://clob.polymarket.com/';
